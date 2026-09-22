@@ -18,10 +18,10 @@
 //! This module defines the `Status` and `StatusResp` structures used in the Interaction Model.
 
 use crate::error::Error;
-use crate::tlv::{FromTLV, TagType, ToTLV};
+use crate::tlv::{FromTLV, TLVTag, TLVWrite, TagType, ToTLV, TLV};
 use crate::utils::storage::WriteBuf;
 
-use super::IMStatusCode;
+use super::{IMStatusCode, INTERACTION_MODEL_REVISION};
 
 /// An IM status structure that contains an `IMStatusCode` and an optional cluster status code.
 ///
@@ -48,10 +48,30 @@ impl Status {
 /// An IM status response structure used for sending/receiving status responses in the Interaction Model.
 ///
 /// Corresponds to the `StatusResponseMessage` struct in the Matter Interaction Model.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, FromTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StatusResp {
     pub status: IMStatusCode,
+}
+
+impl ToTLV for StatusResp {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.start_struct(tag)?;
+        self.status.to_tlv(&TLVTag::Context(0), &mut tw)?;
+        tw.u8(&TLVTag::Context(255), INTERACTION_MODEL_REVISION)?;
+        tw.end_container()
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        [Ok(TLV::structure(tag))]
+            .into_iter()
+            .chain(self.status.tlv_iter(TLVTag::Context(0)))
+            .chain([Ok(TLV::u8(
+                TLVTag::Context(255),
+                INTERACTION_MODEL_REVISION,
+            ))])
+            .chain([Ok(TLV::end_container())])
+    }
 }
 
 impl StatusResp {

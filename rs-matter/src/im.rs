@@ -216,6 +216,9 @@ pub type LocalizedStringIdentifier = u16;
 pub type TransactionId = u32;
 pub type KeysetId = u16;
 pub type InteractionModelRevision = u8;
+
+/// Interaction Model protocol revision implemented by this stack.
+pub const INTERACTION_MODEL_REVISION: InteractionModelRevision = 12;
 pub type SubscriptionId = u32;
 pub type SceneId = u8;
 pub type Percent = u8;

@@ -28,7 +28,8 @@ use crate::transport::exchange::Exchange;
 
 use super::{
     AttrData, AttrPath, AttrResp, CmdData, CmdPath, CmdResp, DataVersionFilter, EventFilter,
-    EventPath, IMStatusCode, InvokeResp, OpCode, ReportDataResp, StatusResp, TimedReq, WriteResp,
+    EventPath, IMStatusCode, InteractionModelRevision, InvokeResp, OpCode, ReportDataResp,
+    StatusResp, TimedReq, WriteResp, INTERACTION_MODEL_REVISION,
 };
 
 /// Builder for constructing ReadRequest messages.
@@ -48,6 +49,9 @@ pub struct ReadRequestBuilder<'a> {
     pub fabric_filtered: bool,
     /// Data version filters for conditional reads
     pub dataver_filters: Option<&'a [DataVersionFilter]>,
+    /// Interaction Model protocol revision
+    #[tagval(255)]
+    pub interaction_model_revision: InteractionModelRevision,
 }
 
 impl<'a> ReadRequestBuilder<'a> {
@@ -59,6 +63,64 @@ impl<'a> ReadRequestBuilder<'a> {
             event_filters: None,
             fabric_filtered,
             dataver_filters: None,
+            interaction_model_revision: INTERACTION_MODEL_REVISION,
+        }
+    }
+}
+
+/// Builder for constructing SubscribeRequest messages.
+///
+/// Corresponds to the `SubscribeRequestMessage` TLV structure in the Interaction Model.
+#[derive(Debug, Clone, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a")]
+pub struct SubscribeRequestBuilder<'a> {
+    /// Whether to keep existing subscriptions.
+    pub keep_subs: bool,
+    /// Minimum reporting interval in seconds.
+    pub min_int_floor: u16,
+    /// Maximum reporting interval in seconds.
+    pub max_int_ceil: u16,
+    /// Attribute paths to subscribe to.
+    pub attr_requests: Option<&'a [AttrPath]>,
+    /// Event paths to subscribe to.
+    pub event_requests: Option<&'a [EventPath]>,
+    /// Event filters.
+    pub event_filters: Option<&'a [EventFilter]>,
+    /// Whether to filter results by fabric.
+    #[tagval(7)]
+    pub fabric_filtered: bool,
+    /// Data version filters for conditional subscriptions.
+    #[tagval(8)]
+    pub dataver_filters: Option<&'a [DataVersionFilter]>,
+    /// Interaction Model protocol revision.
+    #[tagval(255)]
+    pub interaction_model_revision: InteractionModelRevision,
+}
+
+impl<'a> SubscribeRequestBuilder<'a> {
+    /// Create a new SubscribeRequest builder.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        keep_subs: bool,
+        min_int_floor: u16,
+        max_int_ceil: u16,
+        attr_requests: Option<&'a [AttrPath]>,
+        event_requests: Option<&'a [EventPath]>,
+        event_filters: Option<&'a [EventFilter]>,
+        fabric_filtered: bool,
+        dataver_filters: Option<&'a [DataVersionFilter]>,
+    ) -> Self {
+        Self {
+            keep_subs,
+            min_int_floor,
+            max_int_ceil,
+            attr_requests,
+            event_requests,
+            event_filters,
+            fabric_filtered,
+            dataver_filters,
+            interaction_model_revision: INTERACTION_MODEL_REVISION,
         }
     }
 }
@@ -71,23 +133,27 @@ impl<'a> ReadRequestBuilder<'a> {
 #[tlvargs(lifetime = "'a")]
 pub struct WriteRequestBuilder<'a> {
     /// Whether to suppress the response
-    pub suppress_response: Option<bool>,
+    pub suppress_response: bool,
     /// Whether this is a timed request
-    pub timed_request: Option<bool>,
+    pub timed_request: bool,
     /// Attribute data to write
     pub write_requests: &'a [AttrData<'a>],
     /// Whether there are more chunks coming
     pub more_chunks: Option<bool>,
+    /// Interaction Model protocol revision
+    #[tagval(255)]
+    pub interaction_model_revision: InteractionModelRevision,
 }
 
 impl<'a> WriteRequestBuilder<'a> {
     /// Create a new WriteRequestBuilder
     pub const fn new(write_requests: &'a [AttrData<'a>], timed: bool) -> Self {
         Self {
-            suppress_response: None,
-            timed_request: if timed { Some(true) } else { None },
+            suppress_response: false,
+            timed_request: timed,
             write_requests,
             more_chunks: None,
+            interaction_model_revision: INTERACTION_MODEL_REVISION,
         }
     }
 }
@@ -100,20 +166,24 @@ impl<'a> WriteRequestBuilder<'a> {
 #[tlvargs(lifetime = "'a")]
 pub struct InvokeRequestBuilder<'a> {
     /// Whether to suppress the response
-    pub suppress_response: Option<bool>,
+    pub suppress_response: bool,
     /// Whether this is a timed request
-    pub timed_request: Option<bool>,
+    pub timed_request: bool,
     /// Command invocations
     pub invoke_requests: &'a [CmdData<'a>],
+    /// Interaction Model protocol revision
+    #[tagval(255)]
+    pub interaction_model_revision: InteractionModelRevision,
 }
 
 impl<'a> InvokeRequestBuilder<'a> {
     /// Create a new InvokeRequestBuilder
     pub const fn new(invoke_requests: &'a [CmdData<'a>], timed: bool) -> Self {
         Self {
-            suppress_response: None,
-            timed_request: if timed { Some(true) } else { None },
+            suppress_response: false,
+            timed_request: timed,
             invoke_requests,
+            interaction_model_revision: INTERACTION_MODEL_REVISION,
         }
     }
 }
@@ -823,6 +893,17 @@ mod tests {
     use super::*;
     use crate::utils::storage::WriteBuf;
 
+    fn encode<T: ToTLV>(value: &T) -> Vec<u8> {
+        let mut buf = [0u8; 256];
+        let mut wb = WriteBuf::new(&mut buf);
+        value.to_tlv(&TagType::Anonymous, &mut wb).unwrap();
+        wb.as_slice().to_vec()
+    }
+
+    fn context_field<'a>(bytes: &'a [u8], tag: u8) -> TLVElement<'a> {
+        TLVElement::new(bytes).r#struct().unwrap().ctx(tag).unwrap()
+    }
+
     #[test]
     fn test_read_request_encoding() {
         let path = AttrPath {
@@ -888,5 +969,115 @@ mod tests {
         req.to_tlv(&TagType::Anonymous, &mut wb).unwrap();
 
         assert!(!wb.as_slice().is_empty());
+    }
+
+    #[test]
+    fn invoke_request_encodes_mandatory_flags_and_revision() {
+        let path = CmdPath {
+            endpoint: Some(1),
+            cluster: Some(0x0006),
+            cmd: Some(0x02),
+        };
+        let cmds = [CmdData {
+            path,
+            data: TLVElement::new(&[]),
+        }];
+
+        for (timed, expected_timed) in [(false, false), (true, true)] {
+            let bytes = encode(&InvokeRequestBuilder::new(&cmds, timed));
+            assert!(!context_field(&bytes, 0).bool().unwrap());
+            assert_eq!(context_field(&bytes, 1).bool().unwrap(), expected_timed);
+            assert_eq!(
+                context_field(&bytes, 255).u8().unwrap(),
+                INTERACTION_MODEL_REVISION
+            );
+        }
+    }
+
+    #[test]
+    fn read_request_encodes_interaction_model_revision() {
+        let path = AttrPath {
+            endpoint: Some(1),
+            cluster: Some(0x0006),
+            attr: Some(0),
+            ..Default::default()
+        };
+        let bytes = encode(&ReadRequestBuilder::attributes(&[path], true));
+
+        assert!(context_field(&bytes, 3).bool().unwrap());
+        assert_eq!(
+            context_field(&bytes, 255).u8().unwrap(),
+            INTERACTION_MODEL_REVISION
+        );
+    }
+
+    #[test]
+    fn subscribe_request_encodes_mandatory_fields_and_revision() {
+        let path = AttrPath {
+            endpoint: Some(1),
+            cluster: Some(0x0006),
+            attr: Some(0),
+            ..Default::default()
+        };
+        let bytes = encode(&SubscribeRequestBuilder::new(
+            false,
+            5,
+            30,
+            Some(&[path]),
+            None,
+            None,
+            true,
+            None,
+        ));
+
+        assert!(!context_field(&bytes, 0).bool().unwrap());
+        assert_eq!(context_field(&bytes, 1).u16().unwrap(), 5);
+        assert_eq!(context_field(&bytes, 2).u16().unwrap(), 30);
+        assert!(context_field(&bytes, 7).bool().unwrap());
+        assert_eq!(
+            context_field(&bytes, 255).u8().unwrap(),
+            INTERACTION_MODEL_REVISION
+        );
+    }
+
+    #[test]
+    fn write_request_encodes_mandatory_flags_and_revision() {
+        let attrs = [AttrData {
+            data_ver: None,
+            path: AttrPath {
+                endpoint: Some(1),
+                cluster: Some(0x0006),
+                attr: Some(0),
+                ..Default::default()
+            },
+            data: TLVElement::new(&[]),
+        }];
+
+        for (timed, expected_timed) in [(false, false), (true, true)] {
+            let bytes = encode(&WriteRequestBuilder::new(&attrs, timed));
+            assert!(!context_field(&bytes, 0).bool().unwrap());
+            assert_eq!(context_field(&bytes, 1).bool().unwrap(), expected_timed);
+            assert_eq!(
+                context_field(&bytes, 255).u8().unwrap(),
+                INTERACTION_MODEL_REVISION
+            );
+        }
+    }
+
+    #[test]
+    fn timed_and_status_requests_encode_interaction_model_revision() {
+        let timed_bytes = encode(&TimedReq { timeout: 1000 });
+        assert_eq!(
+            context_field(&timed_bytes, 255).u8().unwrap(),
+            INTERACTION_MODEL_REVISION
+        );
+
+        let status_bytes = encode(&StatusResp {
+            status: IMStatusCode::Success,
+        });
+        assert_eq!(
+            context_field(&status_bytes, 255).u8().unwrap(),
+            INTERACTION_MODEL_REVISION
+        );
     }
 }

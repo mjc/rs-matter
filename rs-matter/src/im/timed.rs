@@ -19,17 +19,39 @@
 
 use core::time::Duration;
 
-use crate::tlv::{FromTLV, ToTLV};
+use crate::error::Error;
+use crate::tlv::{FromTLV, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::utils::epoch::Epoch;
+
+use super::INTERACTION_MODEL_REVISION;
 
 /// A structure representing a timed request in the Interaction Model.
 ///
 /// Corresponds to the `TimedRequestMessage` struct in the Interaction Model.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, FromTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimedReq {
     /// The timeout duration in milliseconds for the request.
     pub timeout: u16,
+}
+
+impl ToTLV for TimedReq {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.start_struct(tag)?;
+        tw.u16(&TLVTag::Context(0), self.timeout)?;
+        tw.u8(&TLVTag::Context(255), INTERACTION_MODEL_REVISION)?;
+        tw.end_container()
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        [
+            Ok(TLV::structure(tag)),
+            Ok(TLV::u16(TLVTag::Context(0), self.timeout)),
+            Ok(TLV::u8(TLVTag::Context(255), INTERACTION_MODEL_REVISION)),
+            Ok(TLV::end_container()),
+        ]
+        .into_iter()
+    }
 }
 
 impl TimedReq {
