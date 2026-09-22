@@ -865,6 +865,20 @@ impl<'a> Exchange<'a> {
         self.matter
     }
 
+    /// Return the attestation challenge associated with this exchange's session.
+    ///
+    /// # Errors
+    /// Returns [`ErrorCode::NoSession`] if the session has been removed, or
+    /// [`ErrorCode::InvalidState`] if the exchange uses a plaintext session.
+    pub fn attestation_challenge(&self) -> Result<[u8; 16], Error> {
+        self.with_session(|session| {
+            session
+                .get_att_challenge()
+                .map(|challenge| *challenge.access())
+                .ok_or_else(|| ErrorCode::InvalidState.into())
+        })
+    }
+
     /// Create a new initiator exchange on the provided Matter stack for the provided peer Node ID.
     ///
     /// For now, this method will fail if there is no existing session in the provided Matter stack
@@ -1287,6 +1301,103 @@ mod tests {
                 break;
             }
         });
+    }
+
+    fn add_pase_session(matter: &Matter<'_>, challenge: &[u8; 16]) -> u32 {
+        use crate::transport::session::{AttChallengeRef, ReservedSession};
+
+        let mut reserved = ReservedSession::reserve_now(matter, test_only_crypto()).unwrap();
+        let session_id = matter
+            .transport_mgr
+            .session_mgr
+            .borrow()
+            .iter()
+            .last()
+            .unwrap()
+            .id();
+
+        reserved
+            .update(
+                0,
+                0,
+                0,
+                0,
+                network::Address::new(),
+                SessionMode::Pase { fab_idx: 0 },
+                None,
+                None,
+                Some(AttChallengeRef::new(challenge)),
+            )
+            .unwrap();
+        reserved.complete();
+
+        session_id
+    }
+
+    #[test]
+    fn attestation_challenge_returns_session_challenge() {
+        let matter = test_matter(monotonic_test_epoch);
+        let challenge = [0x5a; 16];
+        let session_id = add_pase_session(&matter, &challenge);
+        let exchange = Exchange::initiate_for_session(&matter, session_id).unwrap();
+
+        assert_eq!(exchange.attestation_challenge().unwrap(), challenge);
+    }
+
+    #[test]
+    fn attestation_challenge_uses_the_exchange_session() {
+        let matter = test_matter(monotonic_test_epoch);
+        let first_challenge = [0x11; 16];
+        let second_challenge = [0x22; 16];
+        let first_session_id = add_pase_session(&matter, &first_challenge);
+        let second_session_id = add_pase_session(&matter, &second_challenge);
+        let first_exchange = Exchange::initiate_for_session(&matter, first_session_id).unwrap();
+        let second_exchange = Exchange::initiate_for_session(&matter, second_session_id).unwrap();
+
+        assert_eq!(
+            first_exchange.attestation_challenge().unwrap(),
+            first_challenge
+        );
+        assert_eq!(
+            second_exchange.attestation_challenge().unwrap(),
+            second_challenge
+        );
+    }
+
+    #[test]
+    fn attestation_challenge_rejects_plaintext_sessions() {
+        let matter = test_matter(monotonic_test_epoch);
+        let exchange = block_on(Exchange::initiate_unsecured(
+            &matter,
+            test_only_crypto(),
+            network::Address::new(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            exchange.attestation_challenge().unwrap_err().code(),
+            ErrorCode::InvalidState
+        );
+    }
+
+    #[test]
+    fn attestation_challenge_rejects_removed_sessions() {
+        let matter = test_matter(monotonic_test_epoch);
+        let challenge = [0x33; 16];
+        let session_id = add_pase_session(&matter, &challenge);
+        let exchange = Exchange::initiate_for_session(&matter, session_id).unwrap();
+
+        matter
+            .transport_mgr
+            .session_mgr
+            .borrow_mut()
+            .remove(session_id)
+            .unwrap();
+
+        assert_eq!(
+            exchange.attestation_challenge().unwrap_err().code(),
+            ErrorCode::NoSession
+        );
     }
 
     #[test]
