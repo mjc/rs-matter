@@ -1134,6 +1134,21 @@ impl Sessions {
         session
     }
 
+    pub(crate) fn get_for_rx_exchange(
+        &mut self,
+        rx_peer: &Address,
+        rx_plain: &PlainHdr,
+        rx_proto: &ProtoHdr,
+    ) -> Option<&mut Session> {
+        let index = self.sessions.iter().position(|session| {
+            session.is_for_rx(rx_peer, rx_plain) && session.get_exch_for_rx(rx_proto).is_some()
+        })?;
+
+        let session = &mut self.sessions[index];
+        session.update_last_used(self.epoch);
+        Some(session)
+    }
+
     pub(crate) fn get_for_tx(&mut self, session_id: u32) -> Option<&mut Session> {
         let mut session = self
             .sessions
@@ -1226,10 +1241,97 @@ pub fn derive_group_session_id<C: Crypto>(
 #[cfg(test)]
 mod tests {
     use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
+    use crate::error::ErrorCode;
+    use crate::transport::exchange::{ResponderState, Role};
     use crate::transport::network::Address;
+    use crate::transport::plain_hdr::PlainHdr;
+    use crate::transport::proto_hdr::ProtoHdr;
     use crate::utils::epoch::dummy_epoch;
 
     use super::*;
+
+    #[test]
+    fn rx_session_selection_prefers_matching_exchange() {
+        let mut sessions = Sessions::new(dummy_epoch);
+        let peer = Address::default();
+        let old_id = sessions.add(1, false, peer, None).unwrap().id;
+        sessions
+            .get(old_id)
+            .unwrap()
+            .add_exch(7, Role::Responder(ResponderState::AcceptPending))
+            .unwrap();
+        let current_id = sessions.add(2, false, peer, None).unwrap().id;
+        sessions
+            .get(current_id)
+            .unwrap()
+            .add_exch(19, Role::Responder(ResponderState::AcceptPending))
+            .unwrap();
+
+        let plain = PlainHdr::new();
+        let mut proto = ProtoHdr::new();
+        proto.exch_id = 19;
+        proto.set_initiator();
+
+        let mut wrong_role = proto.clone();
+        wrong_role.unset_initiator();
+        assert!(sessions
+            .get_for_rx_exchange(&peer, &plain, &wrong_role)
+            .is_none());
+
+        assert_eq!(
+            sessions
+                .get_for_rx_exchange(&peer, &plain, &proto)
+                .unwrap()
+                .id,
+            current_id
+        );
+    }
+
+    #[test]
+    fn received_packet_keeps_session_after_exchange_closes() {
+        let mut sessions = Sessions::new(dummy_epoch);
+        let session_id = sessions
+            .add(0, false, Address::default(), Some(42))
+            .unwrap()
+            .id;
+        let session = sessions.get(session_id).unwrap();
+        session.mode = SessionMode::Case {
+            fab_idx: NonZeroU8::new(1).unwrap(),
+            cat_ids: [0; MAX_CAT_IDS_PER_NOC],
+        };
+        let exchange_index = session
+            .add_exch(19, Role::Initiator(Default::default()))
+            .unwrap();
+
+        let mut packet = Packet::<0>::new();
+        packet.rx_session_id = Some(session_id);
+        packet.header.plain.ctr = 5;
+        packet.header.proto.exch_id = 19;
+        assert!(sessions
+            .get(session_id)
+            .unwrap()
+            .post_recv(&packet.header, dummy_epoch)
+            .is_ok());
+
+        sessions
+            .get(session_id)
+            .unwrap()
+            .remove_exch(exchange_index);
+        assert_eq!(
+            sessions
+                .get(session_id)
+                .unwrap()
+                .post_recv(&packet.header, dummy_epoch)
+                .unwrap_err()
+                .code(),
+            ErrorCode::Duplicate
+        );
+
+        let ack_session = packet.rx_session(&mut sessions).unwrap();
+        assert_eq!(ack_session.id, session_id);
+        assert!(ack_session.is_encrypted());
+        assert!(ack_session.get_exch_for_rx(&packet.header.proto).is_none());
+    }
 
     #[test]
     fn test_next_sess_id_doesnt_reuse() {
