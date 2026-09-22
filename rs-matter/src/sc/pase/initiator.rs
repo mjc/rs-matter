@@ -36,6 +36,7 @@ use crate::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::storage::ReadBuf;
+use crate::Matter;
 
 use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_KEYS_INFO};
 
@@ -46,7 +47,8 @@ use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_K
 ///
 /// 1. Create an unsecured exchange to the target device
 /// 2. Call `PaseInitiator::initiate()` with the setup passcode
-/// 3. On success, the exchange's session is upgraded to a secure PASE session
+/// 3. On success, returns an owner for the newly established secure PASE session
+#[allow(unused)]
 pub struct PaseInitiator<C: Crypto> {
     crypto: C,
     spake2p: Spake2P,
@@ -55,6 +57,33 @@ pub struct PaseInitiator<C: Crypto> {
     peer_sessid: u16,
     prover_context: Option<ProverContext>,
     ca: HmacHash,
+}
+
+/// Owns the PASE session established by a successful handshake.
+/// Exchanges opened from this handle always use its exact session ID.
+pub struct EstablishedPaseSession<'a> {
+    matter: &'a Matter<'a>,
+    session_id: u32,
+}
+
+impl<'a> EstablishedPaseSession<'a> {
+    pub fn session_id(&self) -> u32 {
+        self.session_id
+    }
+
+    pub fn open_exchange(&self) -> Result<Exchange<'_>, Error> {
+        Exchange::initiate_for_session(self.matter, self.session_id)
+    }
+
+    pub fn attestation_challenge(&self) -> Result<[u8; 16], Error> {
+        self.open_exchange()?.attestation_challenge()
+    }
+}
+
+impl Drop for EstablishedPaseSession<'_> {
+    fn drop(&mut self) {
+        self.matter.release_pase_session(self.session_id);
+    }
 }
 
 impl<C: Crypto> PaseInitiator<C> {
@@ -81,7 +110,7 @@ impl<C: Crypto> PaseInitiator<C> {
     /// 5. Send Pake3 (with cA)
     /// 6. Receive StatusReport
     ///
-    /// On success, the session is upgraded to a secure PASE session.
+    /// On success, returns a handle that owns the new secure PASE session.
     ///
     /// # Arguments
     /// - `exchange` - An unsecured exchange to the target device
@@ -89,13 +118,14 @@ impl<C: Crypto> PaseInitiator<C> {
     /// - `password` - The setup passcode (typically 8 digits, e.g., 20202021)
     ///
     /// # Returns
-    /// - `Ok(())` on successful session establishment
+    /// - `Ok(EstablishedPaseSession)` on successful session establishment
     /// - `Err(Error)` on failure
-    pub async fn initiate(
-        exchange: &mut Exchange<'_>,
+    #[allow(unused)]
+    pub async fn initiate<'a>(
+        exchange: &mut Exchange<'a>,
         crypto: C,
         password: u32,
-    ) -> Result<(), Error> {
+    ) -> Result<EstablishedPaseSession<'a>, Error> {
         let session = ReservedSession::reserve(exchange.matter(), &crypto).await?;
 
         let mut initiator = Self::new(crypto)?;
@@ -125,7 +155,11 @@ impl<C: Crypto> PaseInitiator<C> {
         initiator.exchange_pake3_status(exchange).await?;
 
         // Step 4: Complete session establishment
-        initiator.complete_session(exchange, session).await
+        let session_id = initiator.complete_session(exchange, session).await?;
+        Ok(EstablishedPaseSession {
+            matter: exchange.matter(),
+            session_id,
+        })
     }
 
     /// Exchange PBKDFParamRequest/Response
@@ -360,7 +394,7 @@ impl<C: Crypto> PaseInitiator<C> {
         &mut self,
         exchange: &mut Exchange<'_>,
         mut session: ReservedSession<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<u32, Error> {
         // Derive session keys from Ke
         let ke = self.spake2p.ke();
 
@@ -397,24 +431,58 @@ impl<C: Crypto> PaseInitiator<C> {
             Some(att_challenge),
         )?;
 
-        // Complete the reserved session
-        session.complete();
+        let session_id = session.id();
 
         // Acknowledge the final message
         exchange.acknowledge().await?;
+
+        // Keep the reservation active until acknowledgement succeeds, so errors
+        // still remove the incomplete session on drop.
+        session.complete();
 
         info!(
             "PASE session established: local_sessid={}, peer_sessid={}",
             self.local_sessid, self.peer_sessid
         );
 
-        Ok(())
+        Ok(session_id)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::crypto::test_only_crypto;
+    use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+    use crate::transport::network::Address;
+    use crate::transport::session::{AttChallengeRef, SessionMode};
+    use crate::utils::epoch::dummy_epoch;
+    use crate::Matter;
+
+    fn test_matter() -> Matter<'static> {
+        Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, dummy_epoch, 0)
+    }
+
+    fn add_pase_session(matter: &Matter<'_>, challenge: &[u8; 16]) -> u32 {
+        let mut reserved = ReservedSession::reserve_now(matter, test_only_crypto()).unwrap();
+        let id = reserved.id();
+        reserved
+            .update(
+                0,
+                0,
+                0,
+                0,
+                Address::new(),
+                SessionMode::Pase { fab_idx: 0 },
+                None,
+                None,
+                Some(AttChallengeRef::new(challenge)),
+            )
+            .unwrap();
+        reserved.complete();
+        id
+    }
 
     #[test]
     fn test_pbkdf_param_req_encoding() {
@@ -461,5 +529,41 @@ mod tests {
         pake3.to_tlv(&TagType::Anonymous, &mut wb).unwrap();
 
         assert!(wb.as_slice().len() > 0);
+    }
+
+    #[test]
+    fn established_pase_session_selects_and_releases_only_its_session() {
+        let matter = test_matter();
+        let first_challenge = [0x31; 16];
+        let second_challenge = [0x72; 16];
+        let first_id = add_pase_session(&matter, &first_challenge);
+        let second_id = add_pase_session(&matter, &second_challenge);
+        let established = EstablishedPaseSession {
+            matter: &matter,
+            session_id: first_id,
+        };
+
+        assert_eq!(established.session_id(), first_id);
+        assert_eq!(
+            established.attestation_challenge().unwrap(),
+            first_challenge
+        );
+
+        drop(established);
+
+        assert_eq!(
+            Exchange::initiate_for_session(&matter, first_id)
+                .err()
+                .unwrap()
+                .code(),
+            ErrorCode::NoSession
+        );
+        assert_eq!(
+            Exchange::initiate_for_session(&matter, second_id)
+                .unwrap()
+                .attestation_challenge()
+                .unwrap(),
+            second_challenge
+        );
     }
 }

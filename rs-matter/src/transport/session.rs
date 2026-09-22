@@ -521,6 +521,10 @@ pub struct ReservedSession<'a> {
 }
 
 impl<'a> ReservedSession<'a> {
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
     pub fn reserve_now<C: Crypto>(matter: &'a Matter<'a>, crypto: C) -> Result<Self, Error> {
         matter.with_state(|state| {
             let mut rand = crypto.weak_rand()?;

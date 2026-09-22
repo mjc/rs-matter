@@ -48,7 +48,7 @@ mod initiator;
 mod responder;
 pub(crate) mod spake2p;
 
-pub use initiator::PaseInitiator;
+pub use initiator::{EstablishedPaseSession, PaseInitiator};
 pub use responder::PaseResponder;
 
 /// Minimal commissioning window timeout in seconds, as per the Matter Core Spec

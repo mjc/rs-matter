@@ -871,7 +871,12 @@ impl<'a> Exchange<'a> {
     /// Returns [`ErrorCode::NoSession`] if the session has been removed, or
     /// [`ErrorCode::InvalidState`] if the exchange uses a plaintext session.
     pub fn attestation_challenge(&self) -> Result<[u8; 16], Error> {
-        self.with_session(|session| {
+        self.matter.with_state(|state| {
+            let session = state
+                .sessions
+                .get(self.id.session_id())
+                .ok_or(ErrorCode::NoSession)?;
+
             session
                 .get_att_challenge()
                 .map(|challenge| *challenge.access())
@@ -1307,14 +1312,7 @@ mod tests {
         use crate::transport::session::{AttChallengeRef, ReservedSession};
 
         let mut reserved = ReservedSession::reserve_now(matter, test_only_crypto()).unwrap();
-        let session_id = matter
-            .transport_mgr
-            .session_mgr
-            .borrow()
-            .iter()
-            .last()
-            .unwrap()
-            .id();
+        let session_id = reserved.id();
 
         reserved
             .update(
@@ -1387,12 +1385,7 @@ mod tests {
         let session_id = add_pase_session(&matter, &challenge);
         let exchange = Exchange::initiate_for_session(&matter, session_id).unwrap();
 
-        matter
-            .transport_mgr
-            .session_mgr
-            .borrow_mut()
-            .remove(session_id)
-            .unwrap();
+        matter.with_state(|state| state.sessions.remove(session_id).unwrap());
 
         assert_eq!(
             exchange.attestation_challenge().unwrap_err().code(),

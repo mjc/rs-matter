@@ -45,7 +45,7 @@ use crate::pairing::DiscoveryCapabilities;
 use crate::sc::pase::spake2p::Spake2pVerifierPassword;
 use crate::sc::pase::Pase;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
-use crate::transport::session::Sessions;
+use crate::transport::session::{SessionMode, Sessions};
 use crate::transport::{
     PacketBufferExternalAccess, Transport, TransportRunner, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE,
 };
@@ -577,6 +577,19 @@ impl<'a> Matter<'a> {
             let mut state = state.borrow_mut();
             f(&mut state)
         })
+    }
+
+    pub(crate) fn release_pase_session(&self, id: u32) {
+        let removed = self.with_state(|state| {
+            let is_pase = state.sessions.get(id).is_some_and(|session| {
+                matches!(session.get_session_mode(), SessionMode::Pase { .. })
+            });
+            is_pase && state.sessions.remove(id).is_some()
+        });
+
+        if removed {
+            self.session_removed.notify();
+        }
     }
 
     /// Reset the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
