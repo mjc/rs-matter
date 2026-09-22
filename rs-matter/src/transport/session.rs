@@ -2105,6 +2105,21 @@ impl Sessions {
         session
     }
 
+    pub(crate) fn get_for_rx_exchange(
+        &mut self,
+        rx_peer: &Address,
+        rx_plain: &PlainHdr,
+        rx_proto: &ProtoHdr,
+    ) -> Option<&mut Session> {
+        let index = self.sessions.iter().position(|session| {
+            session.is_for_rx(rx_peer, rx_plain) && session.get_exch_for_rx(rx_proto).is_some()
+        })?;
+
+        let session = &mut self.sessions[index];
+        session.update_last_used();
+        Some(session)
+    }
+
     pub(crate) fn get_for_tx(&mut self, session_id: u32) -> Option<&mut Session> {
         let mut session = self
             .sessions

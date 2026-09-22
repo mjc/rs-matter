@@ -750,9 +750,7 @@ impl Transport {
             .rx
             .with(|packet| {
                 matter.with_state(|state| {
-                    let session = state
-                        .sessions
-                        .get_for_rx(&packet.peer, &packet.header.plain)?;
+                    let session = state.sessions.get(packet.rx_session_id?)?;
                     let exch_index = session.get_exch_for_rx(&packet.header.proto)?;
 
                     let matches = {
@@ -1664,9 +1662,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         //
                         // Also, since the transport code is single threaded, and since we don't `await`
                         // after decoding the packet, no code can the session
-                        let session = unwrap!(state
-                            .sessions
-                            .get_for_rx(&packet.peer, &packet.header.plain));
+                        let session = unwrap!(packet.rx_session(&mut state.sessions));
 
                         let ack = packet.header.plain.ctr;
 
@@ -1739,10 +1735,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     //
                     // Also, since the transport code is single threaded, and since we don't `await`
                     // after decoding the packet, no code can the session
-                    let session_id = unwrap!(state
-                        .sessions
-                        .get_for_rx(&packet.peer, &packet.header.plain))
-                    .id;
+                    let session_id = unwrap!(packet.rx_session(&mut state.sessions)).id;
 
                     packet.header.proto.exch_id = state.sessions.get_next_exch_id(&self.crypto)?;
                     packet.header.proto.set_initiator();
@@ -1833,10 +1826,8 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     );
 
                     self.matter.with_state(|state| {
-                        if let Some(session_id) = state
-                            .sessions
-                            .get_for_rx(&packet.peer, &packet.header.plain)
-                            .map(|sess| sess.id)
+                        if let Some(session_id) =
+                            packet.rx_session(&mut state.sessions).map(|sess| sess.id)
                         {
                             state.sessions.remove(session_id);
                             self.transport().notify_session_removed();
@@ -1885,10 +1876,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         }
 
         self.matter.with_state(|state| {
-            let Some(session) = state
-                .sessions
-                .get_for_rx(&packet.peer, &packet.header.plain)
-            else {
+            let Some(session) = packet.rx_session(&mut state.sessions) else {
                 return false;
             };
 
@@ -1926,10 +1914,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         }
 
         self.matter.with_state(|state| {
-            let Some(session) = state
-                .sessions
-                .get_for_rx(&packet.peer, &packet.header.plain)
-            else {
+            let Some(session) = packet.rx_session(&mut state.sessions) else {
                 mrp_log!("\n>>RCV {}\n => No session, dropping", packet);
 
                 packet.buf.clear();
@@ -2044,6 +2029,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
     fn decode_packet<const N: usize>(&self, packet: &mut Packet<N>) -> Result<bool, Error> {
         self.matter.with_state(|state| {
+            packet.rx_session_id = None;
             packet.header.reset();
 
             let mut pb = ParseBuf::new(&mut packet.buf[packet.payload_start..]);
@@ -2054,24 +2040,9 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 packet.buf.truncate(end);
             };
 
-            if let Some(session) = state
-                .sessions
-                .get_for_rx(&packet.peer, &packet.header.plain)
-            {
-                // Found existing session: decode, indicate packet payload slice and process further
-
-                let payload_range =
-                    session.decode_remaining(&self.crypto, &mut packet.header, pb)?;
-                set_payload(packet, payload_range);
-
-                return session.post_recv(&packet.header);
-            }
-
-            // No existing session: we either have to create one, or return an error
-
             if !packet.header.plain.is_encrypted() {
-                // Unencrypted packets can be decoded without a session, and we need to anyway do that
-                // in order to determine (based on proto hdr data) whether to create a new session or not
+                // Decode plaintext first so the exchange ID can disambiguate sessions
+                // to the same peer before selecting one.
                 packet
                     .header
                     .decode_remaining(&self.crypto, None, 0, &mut pb)?;
@@ -2079,6 +2050,15 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
                 let payload_range = pb.slice_range();
                 set_payload(packet, payload_range);
+
+                if let Some(session) = state.sessions.get_for_rx_exchange(
+                    &packet.peer,
+                    &packet.header.plain,
+                    &packet.header.proto,
+                ) {
+                    packet.rx_session_id = Some(session.id);
+                    return session.post_recv(&packet.header);
+                }
 
                 if MessageMeta::from(&packet.header.proto).is_new_session() {
                     // As per spec, new unencrypted sessions are only created for
@@ -2093,6 +2073,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         packet.header.plain.get_src_nodeid(),
                         self.matter.dev_det(),
                     )?;
+                    packet.rx_session_id = Some(session.id);
 
                     // Session created successfully: decode, indicate packet payload slice and process further
                     return session.post_recv(&packet.header);
@@ -2121,6 +2102,8 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         self.transport().notify_session_removed();
                     }
                 }
+
+                return Err(ErrorCode::NoSession.into());
             } else {
                 #[cfg(feature = "groups")]
                 if packet.header.plain.is_group_session() {
@@ -2145,12 +2128,25 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         }
                     };
 
+                    packet.rx_session_id = Some(session.id);
+
                     set_payload(packet, payload_range);
 
                     return session.post_recv(&packet.header);
                 }
 
-                // Encrypted unicast packet with no matching session — cannot be decoded
+                if let Some(session) = state
+                    .sessions
+                    .get_for_rx(&packet.peer, &packet.header.plain)
+                {
+                    packet.rx_session_id = Some(session.id);
+                    let payload_range =
+                        session.decode_remaining(&self.crypto, &mut packet.header, pb)?;
+                    set_payload(packet, payload_range);
+                    return session.post_recv(&packet.header);
+                }
+
+                // Encrypted unicast packet with no matching session — cannot be decoded.
                 set_payload(packet, (0, 0));
             }
 
@@ -2462,17 +2458,23 @@ impl Default for TxInfo {
 pub(crate) struct Packet<const N: usize> {
     pub(crate) peer: Address,
     pub(crate) header: PacketHdr,
+    pub(crate) rx_session_id: Option<u32>,
     pub(crate) buf: PacketBuffer<N>,
     pub(crate) payload_start: usize,
     pub(crate) tx_info: TxInfo,
 }
 
 impl<const N: usize> Packet<N> {
+    pub(crate) fn rx_session<'a>(&self, sessions: &'a mut Sessions) -> Option<&'a mut Session> {
+        self.rx_session_id.and_then(|id| sessions.get(id))
+    }
+
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self {
             peer: Address::new(),
             header: PacketHdr::new(),
+            rx_session_id: None,
             buf: PacketBuffer::new(),
             payload_start: 0,
             tx_info: TxInfo::new(),
@@ -2483,6 +2485,7 @@ impl<const N: usize> Packet<N> {
         init!(Self {
             peer: Address::new(),
             header: PacketHdr::new(),
+            rx_session_id: None,
             buf <- PacketBuffer::init(),
             payload_start: 0,
             tx_info: TxInfo::new(),
