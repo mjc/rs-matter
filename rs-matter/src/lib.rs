@@ -62,7 +62,7 @@ use crate::sc::pase::{CommWindowState, Pase};
 use crate::tlv::{TLVElement, TLVTag, ToTLV};
 use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
-use crate::transport::session::Sessions;
+use crate::transport::session::{SessionMode, Sessions};
 use crate::transport::{
     PacketBufferExternalAccess, Transport, TransportRunner, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE,
 };
@@ -540,6 +540,20 @@ impl<'a> Matter<'a> {
     /// that long.
     pub fn has_fabrics(&self) -> bool {
         self.with_state(|state| state.fabrics.iter().next().is_some())
+    }
+
+    pub(crate) fn release_pase_session(&self, id: u32) {
+        let removed = self.with_state(|state| {
+            let is_pase = state
+                .sessions
+                .get(id)
+                .is_some_and(|session| matches!(session.get_session_mode(), SessionMode::Pase { .. }));
+            is_pase && state.sessions.remove(id).is_some()
+        });
+
+        if removed {
+            self.session_removed.notify();
+        }
     }
 
     /// Return the state of the commissioning window - whether one is open, and if so who

@@ -36,6 +36,7 @@ use crate::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::storage::ReadBuf;
+use crate::Matter;
 
 use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_KEYS_INFO};
 
@@ -55,6 +56,33 @@ pub struct PaseInitiator<C: Crypto> {
     peer_sessid: u16,
     prover_context: Option<ProverContext>,
     ca: HmacHash,
+}
+
+/// Owns the PASE session established by a successful handshake.
+/// Exchanges opened from this handle always use its exact session ID.
+pub struct EstablishedPaseSession<'a> {
+    matter: &'a Matter<'a>,
+    session_id: u32,
+}
+
+impl<'a> EstablishedPaseSession<'a> {
+    pub fn session_id(&self) -> u32 {
+        self.session_id
+    }
+
+    pub fn open_exchange(&self) -> Result<Exchange<'_>, Error> {
+        Exchange::initiate_for_session(self.matter, self.session_id)
+    }
+
+    pub fn attestation_challenge(&self) -> Result<[u8; 16], Error> {
+        self.open_exchange()?.attestation_challenge()
+    }
+}
+
+impl Drop for EstablishedPaseSession<'_> {
+    fn drop(&mut self) {
+        self.matter.release_pase_session(self.session_id);
+    }
 }
 
 impl<C: Crypto> PaseInitiator<C> {
@@ -91,12 +119,13 @@ impl<C: Crypto> PaseInitiator<C> {
     /// # Returns
     /// - `Ok(())` on successful session establishment
     /// - `Err(Error)` on failure
-    pub async fn perform(
-        mut exchange: Exchange<'_>,
+    pub async fn perform<'a>(
+        mut exchange: Exchange<'a>,
         crypto: C,
         password: u32,
-    ) -> Result<(), Error> {
+    ) -> Result<EstablishedPaseSession<'a>, Error> {
         let session = ReservedSession::reserve(exchange.matter(), &crypto).await?;
+        let session_id = session.id();
 
         let mut initiator = Self::new(crypto);
 
@@ -128,7 +157,11 @@ impl<C: Crypto> PaseInitiator<C> {
         initiator.exchange_pake3_status(&mut exchange).await?;
 
         // Step 4: Complete session establishment
-        initiator.complete_session(&mut exchange, session).await
+        initiator.complete_session(&mut exchange, session).await?;
+        Ok(EstablishedPaseSession {
+            matter: exchange.matter(),
+            session_id,
+        })
     }
 
     /// Exchange PBKDFParamRequest/Response
@@ -399,11 +432,12 @@ impl<C: Crypto> PaseInitiator<C> {
             None,
         )?;
 
-        // Complete the reserved session
-        session.complete();
-
         // Acknowledge the final message
         exchange.acknowledge().await?;
+
+        // Keep the reservation active until acknowledgement succeeds, so errors
+        // still remove the incomplete session on drop.
+        session.complete();
 
         info!(
             "PASE session established: local_sessid={}, peer_sessid={}",

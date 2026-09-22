@@ -909,6 +909,10 @@ pub struct ReservedSession<'a> {
 }
 
 impl<'a> ReservedSession<'a> {
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
     pub fn reserve_now<C: Crypto>(matter: &'a Matter<'a>, crypto: C) -> Result<Self, Error> {
         let dev_det = matter.dev_det();
         matter.with_state(|state| {

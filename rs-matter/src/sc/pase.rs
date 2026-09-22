@@ -39,7 +39,7 @@ use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
 use crate::MatterLocalService;
 
-pub use initiator::PaseInitiator;
+pub use initiator::{EstablishedPaseSession, PaseInitiator};
 pub use responder::PaseResponder;
 pub use spake2p::{
     Spake2pVerifierPassword, Spake2pVerifierPasswordRef, SPAKE2P_VERIFIER_PASSWORD_LEN,
