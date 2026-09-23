@@ -1396,11 +1396,13 @@ async fn send_timed_request(exchange: &mut Exchange<'_>, timeout_ms: u16) -> Res
     let status_resp = StatusResp::from_tlv(&TLVElement::new(rx.payload()))?;
     if status_resp.status != IMStatusCode::Success {
         error!("TimedRequest failed with status: {:?}", status_resp.status);
-        return Err(status_resp
-            .status
-            .to_error_code()
-            .unwrap_or(ErrorCode::Failure)
-            .into());
+        return Err(Error::new(
+            status_resp
+                .status
+                .to_error_code()
+                .unwrap_or(ErrorCode::Failure),
+        )
+        .with_im_status(status_resp.status));
     }
 
     Ok(())
