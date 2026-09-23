@@ -1088,6 +1088,39 @@ impl Sessions {
         }
     }
 
+    /// Expire CASE sessions for one peer without disturbing other peers on the fabric.
+    ///
+    /// Existing exchanges may still finish on an expired session, but new exchanges
+    /// will select only a replacement session after CASE is re-established.
+    pub fn expire_sessions_for_peer(&mut self, fabric_idx: NonZeroU8, peer_node_id: u64) -> usize {
+        let mut expired = 0;
+        for session in &mut self.sessions {
+            if session.get_local_fabric_idx() == fabric_idx.get()
+                && session.peer_nodeid == Some(peer_node_id)
+                && matches!(session.mode, SessionMode::Case { .. })
+                && !session.expired
+            {
+                session.expired = true;
+                expired += 1;
+            }
+        }
+        expired
+    }
+
+    /// Return whether this fabric has a live CASE session for the given peer.
+    pub fn has_operational_case_session_for_peer(
+        &self,
+        fabric_idx: NonZeroU8,
+        peer_node_id: u64,
+    ) -> bool {
+        self.sessions.iter().any(|session| {
+            session.get_local_fabric_idx() == fabric_idx.get()
+                && session.peer_nodeid == Some(peer_node_id)
+                && matches!(session.mode, SessionMode::Case { .. })
+                && !session.expired
+        })
+    }
+
     pub fn get(&mut self, id: u32) -> Option<&mut Session> {
         let mut session = self.sessions.iter_mut().find(|sess| sess.id == id);
 
@@ -1331,6 +1364,34 @@ mod tests {
         assert_eq!(ack_session.id, session_id);
         assert!(ack_session.is_encrypted());
         assert!(ack_session.get_exch_for_rx(&packet.header.proto).is_none());
+    }
+
+    #[test]
+    fn expiring_peer_sessions_preserves_other_peers_on_the_same_fabric() {
+        let mut sessions = SessionMgr::new(dummy_epoch);
+        let fabric_idx = NonZeroU8::new(1).unwrap();
+        let first = sessions
+            .add(0, false, Address::default(), Some(41))
+            .unwrap()
+            .id();
+        let second = sessions
+            .add(0, false, Address::default(), Some(42))
+            .unwrap()
+            .id();
+        for session_id in [first, second] {
+            sessions.get(session_id).unwrap().mode = SessionMode::Case {
+                fab_idx: fabric_idx,
+                cat_ids: [0; MAX_CAT_IDS_PER_NOC],
+            };
+        }
+
+        assert_eq!(sessions.expire_sessions_for_peer(fabric_idx, 41), 1);
+        assert!(sessions.get(first).unwrap().is_expired());
+        assert!(!sessions.get(second).unwrap().is_expired());
+        assert!(sessions.get_for_node(1, 41, true).is_none());
+        assert_eq!(sessions.get_for_node(1, 42, true).unwrap().id(), second);
+        assert!(sessions.has_operational_case_session_for_peer(fabric_idx, 42));
+        assert!(!sessions.has_operational_case_session_for_peer(fabric_idx, 41));
     }
 
     #[test]
