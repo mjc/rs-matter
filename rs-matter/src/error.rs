@@ -121,6 +121,7 @@ impl From<ErrorCode> for Error {
 
 pub struct Error {
     code: ErrorCode,
+    im_status: Option<crate::im::IMStatusCode>,
     #[cfg(all(feature = "std", feature = "backtrace"))]
     backtrace: std::backtrace::Backtrace,
     #[cfg(all(feature = "alloc", feature = "backtrace"))]
@@ -131,6 +132,7 @@ impl Error {
     pub fn new(code: ErrorCode) -> Self {
         Self {
             code,
+            im_status: None,
             #[cfg(all(feature = "std", feature = "backtrace"))]
             backtrace: std::backtrace::Backtrace::capture(),
             #[cfg(all(feature = "alloc", feature = "backtrace"))]
@@ -145,6 +147,7 @@ impl Error {
     ) -> Self {
         Self {
             code,
+            im_status: None,
             #[cfg(feature = "std")]
             backtrace: std::backtrace::Backtrace::capture(),
             inner: Some(detailed_err),
@@ -153,6 +156,17 @@ impl Error {
 
     pub const fn code(&self) -> ErrorCode {
         self.code
+    }
+
+    /// Return the Matter Interaction Model status carried by a response.
+    pub const fn im_status(&self) -> Option<crate::im::IMStatusCode> {
+        self.im_status
+    }
+
+    /// Attach a received Interaction Model status without flattening it to an internal error.
+    pub const fn with_im_status(mut self, status: crate::im::IMStatusCode) -> Self {
+        self.im_status = Some(status);
+        self
     }
 
     #[cfg(all(feature = "std", feature = "backtrace"))]
@@ -282,5 +296,19 @@ impl core::error::Error for Error {
         self.inner
             .as_ref()
             .map(|e| e.as_ref() as &(dyn core::error::Error + 'static))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Error, ErrorCode};
+    use crate::im::IMStatusCode;
+
+    #[test]
+    fn error_preserves_interaction_model_status() {
+        let error = Error::new(ErrorCode::Busy).with_im_status(IMStatusCode::Busy);
+
+        assert_eq!(error.code(), ErrorCode::Busy);
+        assert_eq!(error.im_status(), Some(IMStatusCode::Busy));
     }
 }
