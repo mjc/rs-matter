@@ -579,6 +579,32 @@ impl<'a> Matter<'a> {
         })
     }
 
+    /// Expire CASE sessions for one peer while preserving sessions for other peers.
+    pub fn expire_case_sessions_for_peer(
+        &self,
+        fabric_idx: core::num::NonZeroU8,
+        peer_node_id: u64,
+    ) -> usize {
+        self.with_state(|state| {
+            state
+                .sessions
+                .expire_sessions_for_peer(fabric_idx, peer_node_id)
+        })
+    }
+
+    /// Return whether this stack has a live CASE session for the given peer.
+    pub fn has_operational_case_session_for_peer(
+        &self,
+        fabric_idx: core::num::NonZeroU8,
+        peer_node_id: u64,
+    ) -> bool {
+        self.with_state(|state| {
+            state
+                .sessions
+                .has_operational_case_session_for_peer(fabric_idx, peer_node_id)
+        })
+    }
+
     pub(crate) fn release_pase_session(&self, id: u32) {
         let removed = self.with_state(|state| {
             let is_pase = state.sessions.get(id).is_some_and(|session| {
