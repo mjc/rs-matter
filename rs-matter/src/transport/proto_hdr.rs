@@ -461,6 +461,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn decrypt_authenticates_optional_node_ids() {
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[0x42; 16]);
+        for flags in [0_u8, 1, 4, 5] {
+            let mut header = std::vec![flags, 2, 0, 0, 7, 0, 0, 0];
+            if flags & 4 != 0 {
+                header.extend_from_slice(&1_u64.to_le_bytes());
+            }
+            if flags & 1 != 0 {
+                header.extend_from_slice(&112233_u64.to_le_bytes());
+            }
+
+            let mut payload = [0_u8; 64];
+            let mut writer = WriteBuf::new(&mut payload);
+            writer.append(&[1, 2, 3, 4]).unwrap();
+            encrypt_in_place(test_only_crypto(), KEY, 7, 1, 112233, &header, &mut writer).unwrap();
+            let mut packet = header.clone();
+            packet.extend_from_slice(writer.as_slice());
+            let mut tampered = packet.clone();
+
+            let mut parsed = ParseBuf::new(packet.as_mut_slice());
+            plain_hdr::PlainHdr::default().decode(&mut parsed).unwrap();
+            decrypt_in_place(test_only_crypto(), KEY, 7, 1, 112233, &mut parsed).unwrap();
+            assert_eq!(parsed.as_slice(), &[1, 2, 3, 4]);
+
+            *tampered.get_mut(header.len() - 1).unwrap() ^= 1;
+            let mut parsed = ParseBuf::new(&mut tampered);
+            parsed.parse_head_with(header.len(), |_| ()).unwrap();
+            assert!(decrypt_in_place(test_only_crypto(), KEY, 7, 1, 112233, &mut parsed).is_err());
+        }
+    }
+
+    #[test]
     pub fn test_decrypt_success() {
         // These values are captured from an execution run of the chip-tool binary
         let recvd_ctr = 15287282;

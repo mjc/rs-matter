@@ -884,6 +884,26 @@ impl<'a> Exchange<'a> {
         })
     }
 
+    /// Return the authenticated CASE peer's local fabric index and node ID.
+    ///
+    /// # Errors
+    /// Returns [`ErrorCode::NoSession`] if the session has been removed, or
+    /// [`ErrorCode::InvalidState`] for PASE or plaintext sessions.
+    pub fn authenticated_peer_identity(&self) -> Result<(u8, u64), Error> {
+        self.matter.with_state(|state| {
+            let session = state
+                .sessions
+                .get(self.id.session_id())
+                .ok_or(ErrorCode::NoSession)?;
+            let super::session::SessionMode::Case { fab_idx, .. } = session.get_session_mode()
+            else {
+                return Err(ErrorCode::InvalidState.into());
+            };
+            let node_id = session.get_peer_node_id().ok_or(ErrorCode::InvalidState)?;
+            Ok((fab_idx.get(), node_id))
+        })
+    }
+
     /// Create a new initiator exchange on the provided Matter stack for the provided peer Node ID.
     ///
     /// For now, this method will fail if there is no existing session in the provided Matter stack
@@ -1330,6 +1350,67 @@ mod tests {
         reserved.complete();
 
         session_id
+    }
+
+    #[test]
+    fn authenticated_peer_identity_requires_case_and_live_session() {
+        use crate::transport::session::ReservedSession;
+        let matter = test_matter(monotonic_test_epoch);
+        let plain = block_on(Exchange::initiate_unsecured(
+            &matter,
+            test_only_crypto(),
+            network::Address::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            plain.authenticated_peer_identity().unwrap_err().code(),
+            ErrorCode::InvalidState
+        );
+        let pase_id = add_pase_session(&matter, &[0; 16]);
+        let pase = Exchange::initiate_for_session(&matter, pase_id).unwrap();
+        assert_eq!(
+            pase.authenticated_peer_identity().unwrap_err().code(),
+            ErrorCode::InvalidState
+        );
+        matter
+            .with_state(|state| {
+                state
+                    .sessions
+                    .get(pase_id)
+                    .unwrap()
+                    .upgrade_fabric_idx(core::num::NonZeroU8::new(3).unwrap())
+            })
+            .unwrap();
+        assert_eq!(
+            pase.authenticated_peer_identity().unwrap_err().code(),
+            ErrorCode::InvalidState
+        );
+        let mut reserved = ReservedSession::reserve_now(&matter, test_only_crypto()).unwrap();
+        let session_id = reserved.id();
+        reserved
+            .update(
+                112233,
+                42,
+                7,
+                8,
+                network::Address::new(),
+                SessionMode::Case {
+                    fab_idx: core::num::NonZeroU8::new(3).unwrap(),
+                    cat_ids: Default::default(),
+                },
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        reserved.complete();
+        let case = Exchange::initiate_for_session(&matter, session_id).unwrap();
+        assert_eq!(case.authenticated_peer_identity().unwrap(), (3, 42));
+        matter.with_state(|state| state.sessions.remove(session_id).unwrap());
+        assert_eq!(
+            case.authenticated_peer_identity().unwrap_err().code(),
+            ErrorCode::NoSession
+        );
     }
 
     #[test]
