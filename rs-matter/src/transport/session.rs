@@ -913,6 +913,12 @@ impl<'a> ReservedSession<'a> {
         self.id
     }
 
+    /// Allocate the next local session ID for the reserved session's stack.
+    pub fn next_local_session_id(&self) -> u16 {
+        self.matter
+            .with_state(|state| state.sessions.get_next_sess_id())
+    }
+
     pub fn reserve_now<C: Crypto>(matter: &'a Matter<'a>, crypto: C) -> Result<Self, Error> {
         let dev_det = matter.dev_det();
         matter.with_state(|state| {
