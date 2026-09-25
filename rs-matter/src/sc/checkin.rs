@@ -55,6 +55,35 @@ pub struct CheckInPayload<'a> {
     pub app_data: &'a [u8],
 }
 
+/// The validated position of a Check-In counter in its registration window.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CheckInCounterPosition {
+    pub offset: u32,
+    pub refresh_needed: bool,
+}
+
+/// Validate a received counter against the offset last accepted for a registration.
+///
+/// Counters use wrapping arithmetic. Duplicate, stale and out-of-order counters
+/// return `None`; reaching the upper half of the counter space signals that the
+/// registration should be refreshed.
+pub const fn validate_counter(
+    counter_start: u32,
+    last_offset: u32,
+    counter: u32,
+) -> Option<CheckInCounterPosition> {
+    let offset = counter.wrapping_sub(counter_start);
+    if offset <= last_offset {
+        None
+    } else {
+        Some(CheckInCounterPosition {
+            offset,
+            refresh_needed: offset >= 0x8000_0000,
+        })
+    }
+}
+
 /// The Check-In message codec, bound to a single symmetric key.
 ///
 /// A thin, zero-copy view over a key that lives elsewhere (e.g. a registration
@@ -374,7 +403,7 @@ impl CheckInCounter {
 mod tests {
     use crate::crypto::{test_only_crypto, CanonAeadKeyRef};
 
-    use super::{CheckIn, CheckInCounter};
+    use super::{validate_counter, CheckIn, CheckInCounter, CheckInCounterPosition};
 
     /// A known-answer Check-In message test vector (shared with the reference
     /// implementation's fixtures); matching it byte-for-byte proves interop of
@@ -563,6 +592,25 @@ mod tests {
 
         let mut buf = [0u8; CheckIn::payload_len(0) - 1];
         assert!(checkin.generate(&crypto, 1, &[], &mut buf).is_err());
+    }
+
+    #[test]
+    fn received_counter_rejects_replay_and_marks_refresh_boundary() {
+        assert_eq!(validate_counter(100, 4, 104), None);
+        assert_eq!(
+            validate_counter(100, 4, 105),
+            Some(CheckInCounterPosition {
+                offset: 5,
+                refresh_needed: false,
+            })
+        );
+        assert_eq!(
+            validate_counter(0, 0, 0x8000_0000),
+            Some(CheckInCounterPosition {
+                offset: 0x8000_0000,
+                refresh_needed: true,
+            })
+        );
     }
 
     #[test]
