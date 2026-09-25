@@ -65,6 +65,8 @@ pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =
 const MAX_GROUP_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
 
 const ACCEPT_TIMEOUT_MS: u64 = 1000;
+const MAX_ICD_CHECK_IN_PAYLOAD: usize = 64;
+const MAX_PENDING_ICD_CHECK_INS: usize = 4;
 
 #[cfg(all(feature = "large-buffers", feature = "alloc"))]
 pub(crate) const MAX_RX_BUF_SIZE: usize = network::MAX_RX_LARGE_PACKET_SIZE;
@@ -88,6 +90,8 @@ pub struct Transport {
     group_addrs: IfMutex<Vec<Ipv6Addr, MAX_GROUP_ADDRS>>,
     /// Notification for when an exchange is dropped.
     exchange_dropped: Notification,
+    icd_check_ins: IfMutex<IcdCheckInInbox>,
+    icd_check_in_received: Notification,
     /// Device SAI (Secure Association Identifier)
     device_sai: Option<u16>,
     /// Device SII (Secure Identity Identifier)
@@ -103,9 +107,50 @@ impl Transport {
             tx: IfMutex::new(Packet::new()),
             group_addrs: IfMutex::new(Vec::new()),
             exchange_dropped: Notification::new(),
+            icd_check_ins: IfMutex::new(IcdCheckInInbox::new()),
+            icd_check_in_received: Notification::new(),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         }
+    }
+
+    /// Wait for an incoming plaintext, sessionless ICD Check-In packet.
+    ///
+    /// Check-Ins are copied into a bounded inbox as they arrive, so they never
+    /// occupy the shared receive packet or create a synthetic Matter session.
+    /// Authenticate the payload before associating it with a fabric or node.
+    pub async fn accept_icd_check_in(&self) -> IcdCheckInMessage {
+        loop {
+            let message = {
+                let mut inbox = self.icd_check_ins.lock().await;
+                (!inbox.queue.is_empty()).then(|| inbox.queue.remove(0))
+            };
+            if let Some(message) = message {
+                return message;
+            }
+            self.icd_check_in_received.wait().await;
+        }
+    }
+
+    async fn enqueue_icd_check_in<const N: usize>(&self, packet: &Packet<N>) {
+        let payload = &packet.buf[packet.payload_start..];
+        if payload.len() > MAX_ICD_CHECK_IN_PAYLOAD {
+            warn!("ICD Check-In payload exceeds supported size; dropping");
+            return;
+        }
+
+        let mut message = IcdCheckInMessage {
+            peer: packet.peer,
+            message_counter: packet.header.plain.ctr,
+            payload: [0; MAX_ICD_CHECK_IN_PAYLOAD],
+            payload_len: payload.len(),
+        };
+        message.payload[..payload.len()].copy_from_slice(payload);
+
+        let mut inbox = self.icd_check_ins.lock().await;
+        inbox.push(message);
+        drop(inbox);
+        self.icd_check_in_received.notify();
     }
 
     /// Initialize the transport state by initializing the RX and TX buffers, and setting up the exchange dropped notification.
@@ -115,6 +160,8 @@ impl Transport {
             tx <- IfMutex::init(Packet::init()),
             group_addrs <- IfMutex::init(Vec::new()),
             exchange_dropped: Notification::new(),
+            icd_check_ins <- IfMutex::init(IcdCheckInInbox::new()),
+            icd_check_in_received: Notification::new(),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         })
@@ -747,6 +794,11 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 error!("\n>>RCV {}\n      => Error ({:?}), dropping", packet, e);
             }
             Ok(new_exchange) => {
+                if packet.is_sessionless_icd_check_in() {
+                    self.matter.transport.enqueue_icd_check_in(packet).await;
+                    return Ok(false);
+                }
+
                 let meta = MessageMeta::from(&packet.header.proto);
 
                 if meta.is_standalone_ack() {
@@ -988,6 +1040,10 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
                 let payload_range = pb.slice_range();
                 set_payload(packet, payload_range);
+
+                if packet.is_sessionless_icd_check_in() {
+                    return Ok(true);
+                }
 
                 if let Some(session) = state.sessions.get_for_rx_exchange(
                     &packet.peer,
@@ -1357,6 +1413,68 @@ pub(crate) struct Packet<const N: usize> {
 }
 
 impl<const N: usize> Packet<N> {
+    fn is_sessionless_icd_check_in(&self) -> bool {
+        let meta = MessageMeta::from(&self.header.proto);
+        meta.is_icd_check_in()
+            && !self.peer.is_reliable()
+            && !self.header.plain.is_encrypted()
+            && !self.header.plain.is_group_session()
+            && self.header.plain.get_src_nodeid().is_none()
+            && self.header.plain.get_dst_unicast_nodeid().is_none()
+            && self.header.plain.get_dst_groupcast_nodeid().is_none()
+            && self.header.proto.is_initiator()
+            && self.header.proto.get_ack().is_none()
+    }
+}
+
+struct IcdCheckInInbox {
+    queue: Vec<IcdCheckInMessage, MAX_PENDING_ICD_CHECK_INS>,
+}
+
+impl IcdCheckInInbox {
+    const fn new() -> Self {
+        Self { queue: Vec::new() }
+    }
+
+    fn push(&mut self, message: IcdCheckInMessage) {
+        match self.queue.push(message) {
+            Ok(()) => {}
+            Err(message) => {
+                // Counter gaps are valid, so retain the newest messages when full.
+                self.queue.remove(0);
+                let _ = self.queue.push(message);
+            }
+        }
+    }
+}
+
+/// An owned sessionless ICD Check-In message copied from the receive path.
+pub struct IcdCheckInMessage {
+    peer: Address,
+    message_counter: u32,
+    payload: [u8; MAX_ICD_CHECK_IN_PAYLOAD],
+    payload_len: usize,
+}
+
+impl IcdCheckInMessage {
+    /// The network peer that sent the Check-In packet.
+    pub const fn peer(&self) -> Address {
+        self.peer
+    }
+
+    /// Matter message counter from the unencrypted packet header.
+    pub fn message_counter(&self) -> u32 {
+        self.message_counter
+    }
+
+    /// The authenticated Check-In envelope. Its payload key and replay counter
+    /// must be validated by the caller before acting on it.
+    pub fn payload(&self) -> &[u8] {
+        &self.payload[..self.payload_len]
+    }
+}
+
+impl<const N: usize> Packet<N> {
     pub(crate) fn rx_session<'a>(&self, sessions: &'a mut Sessions) -> Option<&'a mut Session> {
         self.rx_session_id.and_then(|id| sessions.get(id))
     }
@@ -1709,6 +1827,60 @@ mod tests {
 
     fn test_matter() -> Matter<'static> {
         Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, dummy_epoch, 0)
+    }
+
+    #[test]
+    fn sessionless_check_in_packet_filter_rejects_misframed_messages() {
+        let mut packet = Packet::<MAX_RX_BUF_SIZE>::new();
+        OpCode::IcdCheckInMessage
+            .meta()
+            .set_into(&mut packet.header.proto);
+        packet.header.proto.set_initiator();
+
+        assert!(packet.is_sessionless_icd_check_in());
+
+        packet.peer = Address::Tcp(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            MATTER_PORT,
+            0,
+            0,
+        )));
+        assert!(!packet.is_sessionless_icd_check_in());
+        packet.peer = Address::new();
+
+        packet.header.plain.set_src_nodeid(Some(7));
+        assert!(!packet.is_sessionless_icd_check_in());
+        packet.header.plain.set_src_nodeid(None);
+
+        packet.header.proto.set_ack(Some(1));
+        assert!(!packet.is_sessionless_icd_check_in());
+        packet.header.proto.set_ack(None);
+
+        OpCode::IcdCheckInMessage
+            .meta()
+            .reliable(true)
+            .set_into(&mut packet.header.proto);
+        packet.header.proto.set_initiator();
+        assert!(!packet.is_sessionless_icd_check_in());
+    }
+
+    #[test]
+    fn icd_check_in_inbox_keeps_latest_messages_when_full() {
+        let mut inbox = IcdCheckInInbox::new();
+        for counter in 0..=MAX_PENDING_ICD_CHECK_INS as u32 {
+            inbox.push(IcdCheckInMessage {
+                peer: Address::new(),
+                message_counter: counter,
+                payload: [counter as u8; MAX_ICD_CHECK_IN_PAYLOAD],
+                payload_len: 1,
+            });
+        }
+
+        assert_eq!(inbox.queue.len(), MAX_PENDING_ICD_CHECK_INS);
+        assert_eq!(inbox.queue.remove(0).message_counter(), 1);
+        assert_eq!(inbox.queue.remove(0).message_counter(), 2);
+        assert_eq!(inbox.queue.remove(0).message_counter(), 3);
+        assert_eq!(inbox.queue.remove(0).message_counter(), 4);
     }
 
     #[test]

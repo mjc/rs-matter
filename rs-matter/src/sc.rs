@@ -21,7 +21,10 @@ use core::mem::MaybeUninit;
 
 use num_derive::FromPrimitive;
 
-use crate::crypto::Crypto;
+use crate::crypto::{
+    Aead, CanonAeadKeyRef, Crypto, CryptoSensitive, CryptoSensitiveRef, Digest, AEAD_NONCE_LEN,
+    AEAD_TAG_LEN,
+};
 use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::respond::ExchangeHandler;
@@ -40,6 +43,151 @@ pub mod pase;
 /* Interaction Model ID as per the Matter Spec */
 pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
 
+/// Authenticated data carried by a Matter ICD Check-In message.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct IcdCheckInData {
+    /// Device-generated Check-In counter.
+    pub counter: u32,
+    /// Active Mode Threshold in seconds.
+    pub active_mode_threshold: u16,
+}
+
+/// The validated position of a Check-In counter in its registration window.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct IcdCheckInCounter {
+    pub offset: u32,
+    pub refresh_needed: bool,
+}
+
+/// Decrypt and authenticate an ICD Check-In payload in place.
+///
+/// The payload is the 13-byte nonce followed by AES-CCM ciphertext and a
+/// 16-byte MIC. The decrypted body begins with the little-endian counter and
+/// active-mode threshold. The nonce must equal the first 13 bytes of
+/// HMAC-SHA-256(key, counter_le).
+pub fn decode_icd_check_in<C: Crypto>(
+    crypto: &C,
+    key: CanonAeadKeyRef<'_>,
+    payload: &mut [u8],
+) -> Result<IcdCheckInData, Error> {
+    const MIN_CIPHERTEXT_LEN: usize = 4 + 2 + AEAD_TAG_LEN;
+    const MIN_PAYLOAD_LEN: usize = AEAD_NONCE_LEN + MIN_CIPHERTEXT_LEN;
+
+    if payload.len() < MIN_PAYLOAD_LEN {
+        return Err(ErrorCode::Invalid.into());
+    }
+
+    let (received_nonce, encrypted) = payload.split_at_mut(AEAD_NONCE_LEN);
+    let nonce: &[u8; AEAD_NONCE_LEN] = (&*received_nonce).try_into().unwrap();
+    let mut aead = crypto.aead()?;
+    let plaintext = aead.decrypt_in_place(key, CryptoSensitiveRef::new(nonce), &[], encrypted)?;
+
+    let counter = u32::from_le_bytes(plaintext[..4].try_into().unwrap());
+    let mut hmac = crypto.hmac(key)?;
+    hmac.update(&counter.to_le_bytes())?;
+    let mut digest = CryptoSensitive::<32>::new();
+    hmac.finish(&mut digest)?;
+
+    use subtle::ConstantTimeEq;
+    if !bool::from(received_nonce.ct_eq(&digest.access()[..AEAD_NONCE_LEN])) {
+        return Err(ErrorCode::Invalid.into());
+    }
+
+    Ok(IcdCheckInData {
+        counter,
+        active_mode_threshold: u16::from_le_bytes(plaintext[4..6].try_into().unwrap()),
+    })
+}
+
+/// Validate a Check-In counter against the offset last accepted for its registration.
+///
+/// Counters use wrapping arithmetic. A strictly increasing offset is accepted;
+/// reaching the upper half of the counter space signals that registration refresh
+/// is due. Duplicate, stale and out-of-order counters return `None`.
+pub const fn validate_icd_check_in_counter(
+    counter_start: u32,
+    last_offset: u32,
+    counter: u32,
+) -> Option<IcdCheckInCounter> {
+    let offset = counter.wrapping_sub(counter_start);
+    if offset <= last_offset {
+        None
+    } else {
+        Some(IcdCheckInCounter {
+            offset,
+            refresh_needed: offset >= 0x8000_0000,
+        })
+    }
+}
+
+#[cfg(test)]
+mod icd_tests {
+    use super::*;
+    use crate::crypto::{test_only_crypto, Aead, CryptoSensitive, CryptoSensitiveRef, Digest};
+
+    #[test]
+    fn check_in_decoder_authenticates_nonce_and_decrypts_counter_and_threshold() {
+        let crypto = test_only_crypto();
+        let key = [0x42; 16];
+        let counter = 0x1234_5678_u32;
+        let threshold = 900_u16;
+        let counter_bytes = counter.to_le_bytes();
+
+        let mut hmac = crypto.hmac(CryptoSensitiveRef::new(&key)).unwrap();
+        hmac.update(&counter_bytes).unwrap();
+        let mut digest = CryptoSensitive::<32>::new();
+        hmac.finish(&mut digest).unwrap();
+        let mut nonce = [0; 13];
+        nonce.copy_from_slice(&digest.access()[..13]);
+
+        let mut encrypted = [0; 22];
+        encrypted[..4].copy_from_slice(&counter_bytes);
+        encrypted[4..6].copy_from_slice(&threshold.to_le_bytes());
+        let mut aead = crypto.aead().unwrap();
+        aead.encrypt_in_place(
+            CryptoSensitiveRef::new(&key),
+            CryptoSensitiveRef::new(&nonce),
+            &[],
+            &mut encrypted,
+            6,
+        )
+        .unwrap();
+
+        let mut payload = [0; 35];
+        payload[..13].copy_from_slice(&nonce);
+        payload[13..].copy_from_slice(&encrypted);
+
+        let check_in =
+            decode_icd_check_in(&crypto, CryptoSensitiveRef::new(&key), &mut payload).unwrap();
+
+        assert_eq!(check_in.counter, counter);
+        assert_eq!(check_in.active_mode_threshold, threshold);
+    }
+
+    #[test]
+    fn check_in_counter_rejects_replay_and_marks_counter_refresh() {
+        assert_eq!(
+            validate_icd_check_in_counter(100, 4, 104),
+            None,
+            "the last accepted offset is replayed"
+        );
+        assert_eq!(
+            validate_icd_check_in_counter(100, 4, 105),
+            Some(IcdCheckInCounter {
+                offset: 5,
+                refresh_needed: false,
+            })
+        );
+        assert_eq!(
+            validate_icd_check_in_counter(0, 0, 0x8000_0000),
+            Some(IcdCheckInCounter {
+                offset: 0x8000_0000,
+                refresh_needed: true,
+            })
+        );
+    }
+}
+
 #[derive(FromPrimitive, Debug, Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpCode {
@@ -56,6 +204,7 @@ pub enum OpCode {
     CASESigma3 = 0x32,
     CASESigma2Resume = 0x33,
     StatusReport = 0x40,
+    IcdCheckInMessage = 0x50,
 }
 
 impl OpCode {
@@ -63,7 +212,7 @@ impl OpCode {
         MessageMeta {
             proto_id: PROTO_ID_SECURE_CHANNEL,
             proto_opcode: *self as u8,
-            reliable: !matches!(self, Self::MRPStandAloneAck),
+            reliable: !matches!(self, Self::MRPStandAloneAck | Self::IcdCheckInMessage),
         }
     }
 
@@ -74,6 +223,7 @@ impl OpCode {
                 | Self::StatusReport
                 | Self::MsgCounterSyncReq
                 | Self::MsgCounterSyncResp
+                | Self::IcdCheckInMessage
         )
     }
 }

@@ -550,6 +550,13 @@ impl MessageMeta {
                 || self.proto_opcode == sc::OpCode::CASESigma1 as u8)
     }
 
+    /// Whether this is the unreliable, sessionless ICD Check-In message.
+    pub(crate) fn is_icd_check_in(&self) -> bool {
+        self.proto_id == PROTO_ID_SECURE_CHANNEL
+            && self.proto_opcode == sc::OpCode::IcdCheckInMessage as u8
+            && !self.reliable
+    }
+
     /// Utility method to check if the meta-data indicates a new exchange
     pub(crate) fn is_new_exchange(&self) -> bool {
         // Don't create new exchanges for standalone ACKs and for SC status codes
@@ -1297,6 +1304,18 @@ impl Display for Exchange<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icd_check_in_is_a_sessionless_unreliable_secure_channel_message() {
+        let meta = crate::sc::OpCode::IcdCheckInMessage.meta();
+
+        assert_eq!(meta.proto_id, crate::sc::PROTO_ID_SECURE_CHANNEL);
+        assert_eq!(meta.proto_opcode, 0x50);
+        assert!(!meta.reliable);
+        assert!(!meta.is_tlv());
+        assert!(meta.is_new_exchange());
+        assert!(!meta.is_new_session());
+    }
     use crate::crypto::test_only_crypto;
     use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
     use crate::error::ErrorCode;
