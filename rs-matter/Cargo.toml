@@ -127,6 +127,7 @@ defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt", "mbedtls-rs-sys
 log = ["dep:log", "embassy-time/log"]
 debug-tlv-payload = []
 large-buffers = [] # TCP support
+bdx = ["std", "dep:matter-bdx"]
 
 [dependencies]
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
@@ -153,6 +154,7 @@ domain = { version = "0.10", default-features = false, features = ["heapless"] }
 qrcodegen-no-heap = "1.8"
 scopeguard = { version = "1", default-features = false }
 pinned-init = { version = "0.0.8", default-features = false }
+matter-bdx = { version = "0.3.1", optional = true }
 
 # crypto
 openssl = { version = "0.10", optional = true }

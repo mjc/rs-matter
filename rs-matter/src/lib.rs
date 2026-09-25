@@ -67,6 +67,8 @@ extern crate alloc;
 pub(crate) mod fmt;
 
 pub mod acl;
+#[cfg(feature = "bdx")]
+pub mod bdx;
 pub mod cert;
 pub mod credentials;
 pub mod crypto;

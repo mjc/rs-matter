@@ -35,6 +35,7 @@ pub mod level_control;
 pub mod net_comm;
 pub mod noc;
 pub mod on_off;
+pub mod ota_software_update_provider;
 pub mod thread_diag;
 pub mod unit_testing;
 pub mod wifi_diag;
@@ -59,6 +60,7 @@ pub mod decl {
         MediaPlayback, // TODO: Fix with #342
         NetworkCommissioning,
         OnOff, // TODO: Fix with #342
+        OtaSoftwareUpdateProvider,
         OperationalCredentials,
         ThreadNetworkDiagnostics,
         UnitTesting, // TODO: Fix with #342
