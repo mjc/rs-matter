@@ -3,6 +3,11 @@
 //! The source is read one negotiated block at a time. Keep image lookup and
 //! authorization policy in the caller, then pass the selected source here.
 
+use core::future::Future;
+use core::pin::Pin;
+
+use embassy_futures::select::{select, Either};
+
 pub use matter_bdx::BdxStatusCode;
 use matter_bdx::{
     BdxError as CodecError, BdxMessage, CounterMessage, MessageType, ReceiveAccept,
@@ -63,11 +68,38 @@ pub async fn serve<S: BlockSource>(
     expected_designator: &[u8],
     max_block_size: u16,
 ) -> Result<(), ProviderError<S::Error>> {
+    serve_with_cancel(
+        exchange,
+        source,
+        expected_designator,
+        max_block_size,
+        core::future::pending::<()>(),
+    )
+    .await
+}
+
+/// Serve a BDX transfer and observe cancellation between Matter sends.
+///
+/// Reliable sends are allowed to finish before cancellation is handled. This
+/// keeps their MRP retransmission state valid so the provider can send a BDX
+/// StatusReport without dropping the surrounding CASE session.
+pub async fn serve_with_cancel<S, F>(
+    exchange: &mut Exchange<'_>,
+    source: &S,
+    expected_designator: &[u8],
+    max_block_size: u16,
+    cancellation: F,
+) -> Result<(), ProviderError<S::Error>>
+where
+    S: BlockSource,
+    F: Future<Output = ()>,
+{
+    let mut cancellation = core::pin::pin!(cancellation);
     if exchange.authenticated_peer_identity().is_err() {
         return Err(ProviderError::UnauthenticatedPeer);
     }
 
-    let init = recv_bdx::<S::Error>(exchange).await?;
+    let init = recv_bdx_or_cancel::<S::Error, F>(exchange, cancellation.as_mut()).await?;
     let BdxMessage::ReceiveInit(init) = init else {
         send_abort(exchange, BdxStatusCode::UnexpectedMessage).await?;
         return Err(ProviderError::UnexpectedMessage);
@@ -93,7 +125,7 @@ pub async fn serve<S: BlockSource>(
     let mut next_counter = 0u32;
     let mut last_response: Option<(u32, MessageType, Vec<u8>)> = None;
     loop {
-        match recv_bdx::<S::Error>(exchange).await? {
+        match recv_bdx_or_cancel::<S::Error, F>(exchange, cancellation.as_mut()).await? {
             BdxMessage::BlockQuery(query)
                 if last_response.as_ref().is_some_and(|(counter, _, _)| {
                     is_duplicate_query(query.block_counter, next_counter, *counter)
@@ -147,7 +179,7 @@ pub async fn serve<S: BlockSource>(
         return Err(ProviderError::UnexpectedMessage);
     };
     loop {
-        match recv_bdx::<S::Error>(exchange).await? {
+        match recv_bdx_or_cancel::<S::Error, F>(exchange, cancellation.as_mut()).await? {
             BdxMessage::BlockQuery(query) if query.block_counter == last_counter => {
                 send_bdx(exchange, final_type, &final_payload).await?;
             }
@@ -207,6 +239,30 @@ fn next_block_len(offset: u64, length: u64, block_size: u16) -> Option<usize> {
 
 async fn recv_bdx<E>(exchange: &mut Exchange<'_>) -> Result<BdxMessage, ProviderError<E>> {
     let rx = exchange.recv().await?;
+    decode_bdx_message(exchange, rx).await
+}
+
+async fn recv_bdx_or_cancel<E, F>(
+    exchange: &mut Exchange<'_>,
+    cancellation: Pin<&mut F>,
+) -> Result<BdxMessage, ProviderError<E>>
+where
+    F: Future<Output = ()>,
+{
+    let rx = match select(exchange.recv(), cancellation).await {
+        Either::First(result) => result?,
+        Either::Second(()) => {
+            send_abort(exchange, BdxStatusCode::Unknown).await?;
+            return Err(ProviderError::Cancelled);
+        }
+    };
+    decode_bdx_message(exchange, rx).await
+}
+
+async fn decode_bdx_message<E>(
+    exchange: &mut Exchange<'_>,
+    rx: crate::transport::exchange::RxMessage<'_>,
+) -> Result<BdxMessage, ProviderError<E>> {
     let meta = rx.meta();
     if meta.proto_id == crate::sc::PROTO_ID_SECURE_CHANNEL
         && meta.proto_opcode == OpCode::StatusReport as u8
