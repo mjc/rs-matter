@@ -238,8 +238,11 @@ fn next_block_len(offset: u64, length: u64, block_size: u16) -> Option<usize> {
 }
 
 async fn recv_bdx<E>(exchange: &mut Exchange<'_>) -> Result<BdxMessage, ProviderError<E>> {
-    let rx = exchange.recv().await?;
-    decode_bdx_message(exchange, rx).await
+    let decoded = {
+        let rx = exchange.recv().await?;
+        decode_bdx_message(rx)
+    };
+    finish_bdx_receive(exchange, decoded).await
 }
 
 async fn recv_bdx_or_cancel<E, F>(
@@ -249,43 +252,65 @@ async fn recv_bdx_or_cancel<E, F>(
 where
     F: Future<Output = ()>,
 {
-    let rx = match select(exchange.recv(), cancellation).await {
-        Either::First(result) => result?,
-        Either::Second(()) => {
-            send_abort(exchange, BdxStatusCode::Unknown).await?;
-            return Err(ProviderError::Cancelled);
+    let decoded = match select(exchange.recv(), cancellation).await {
+        Either::First(result) => {
+            let rx = result?;
+            Some(decode_bdx_message(rx))
         }
+        Either::Second(()) => None,
     };
-    decode_bdx_message(exchange, rx).await
+    let Some(decoded) = decoded else {
+        send_abort(exchange, BdxStatusCode::Unknown).await?;
+        return Err(ProviderError::Cancelled);
+    };
+    finish_bdx_receive(exchange, decoded).await
 }
 
-async fn decode_bdx_message<E>(
-    exchange: &mut Exchange<'_>,
+enum BdxDecodeError<E> {
+    Cancelled,
+    Abort(BdxStatusCode, ProviderError<E>),
+}
+
+fn decode_bdx_message<E>(
     rx: crate::transport::exchange::RxMessage<'_>,
-) -> Result<BdxMessage, ProviderError<E>> {
+) -> Result<BdxMessage, BdxDecodeError<E>> {
     let meta = rx.meta();
     if meta.proto_id == crate::sc::PROTO_ID_SECURE_CHANNEL
         && meta.proto_opcode == OpCode::StatusReport as u8
     {
-        drop(rx);
-        return Err(ProviderError::Cancelled);
+        return Err(BdxDecodeError::Cancelled);
     }
     if meta.proto_id != PROTO_ID_BDX {
-        drop(rx);
-        send_abort(exchange, BdxStatusCode::UnexpectedMessage).await?;
-        return Err(ProviderError::UnexpectedMessage);
+        return Err(BdxDecodeError::Abort(
+            BdxStatusCode::UnexpectedMessage,
+            ProviderError::UnexpectedMessage,
+        ));
     }
     let Some(message_type) = MessageType::from_u8(meta.proto_opcode) else {
-        drop(rx);
-        send_abort(exchange, BdxStatusCode::UnexpectedMessage).await?;
-        return Err(ProviderError::UnexpectedMessage);
+        return Err(BdxDecodeError::Abort(
+            BdxStatusCode::UnexpectedMessage,
+            ProviderError::UnexpectedMessage,
+        ));
     };
     match BdxMessage::decode(message_type, rx.payload()) {
         Ok(message) => Ok(message),
-        Err(error) => {
-            drop(rx);
-            send_abort(exchange, BdxStatusCode::BadMessageContents).await?;
-            Err(ProviderError::Codec(error))
+        Err(error) => Err(BdxDecodeError::Abort(
+            BdxStatusCode::BadMessageContents,
+            ProviderError::Codec(error),
+        )),
+    }
+}
+
+async fn finish_bdx_receive<E>(
+    exchange: &mut Exchange<'_>,
+    decoded: Result<BdxMessage, BdxDecodeError<E>>,
+) -> Result<BdxMessage, ProviderError<E>> {
+    match decoded {
+        Ok(message) => Ok(message),
+        Err(BdxDecodeError::Cancelled) => Err(ProviderError::Cancelled),
+        Err(BdxDecodeError::Abort(status, error)) => {
+            send_abort(exchange, status).await?;
+            Err(error)
         }
     }
 }
