@@ -143,6 +143,11 @@ impl BdxStatus {
     }
 }
 
+/// Abort an active BDX exchange by sending a BDX `StatusReport`.
+pub async fn abort(exchange: &mut Exchange<'_>, status: BdxStatus) -> Result<(), Error> {
+    nego::send_status_report(exchange, status).await
+}
+
 /// The Proposed Transfer Control (PTC) / Transfer Control (TC) field of the
 /// `*Init`/`*Accept` messages.
 ///
