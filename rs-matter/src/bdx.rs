@@ -3,8 +3,9 @@
 //! The source is read one negotiated block at a time. Keep image lookup and
 //! authorization policy in the caller, then pass the selected source here.
 
+pub use matter_bdx::BdxStatusCode;
 use matter_bdx::{
-    BdxError as CodecError, BdxMessage, BdxStatusCode, CounterMessage, MessageType, ReceiveAccept,
+    BdxError as CodecError, BdxMessage, CounterMessage, MessageType, ReceiveAccept,
     TransferControl, TransferInit, BDX_VERSION,
 };
 
@@ -254,6 +255,12 @@ async fn send_abort<E>(
     let payload = status_report_payload(status);
     exchange.send(OpCode::StatusReport.meta(), &payload).await?;
     Ok(())
+}
+
+/// Abort an active BDX exchange with a protocol StatusReport.
+pub async fn abort(exchange: &mut Exchange<'_>, status: BdxStatusCode) -> Result<(), Error> {
+    let payload = status_report_payload(status);
+    exchange.send(OpCode::StatusReport.meta(), &payload).await
 }
 
 fn status_report_payload(status: BdxStatusCode) -> [u8; 8] {
