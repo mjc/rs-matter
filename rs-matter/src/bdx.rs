@@ -252,12 +252,12 @@ async fn recv_bdx_or_cancel<E, F>(
 where
     F: Future<Output = ()>,
 {
-    let decoded = match select(exchange.recv(), cancellation).await {
-        Either::First(result) => {
+    let decoded = match select(cancellation, exchange.recv()).await {
+        Either::First(()) => None,
+        Either::Second(result) => {
             let rx = result?;
             Some(decode_bdx_message(rx))
         }
-        Either::Second(()) => None,
     };
     let Some(decoded) = decoded else {
         send_abort(exchange, BdxStatusCode::Unknown).await?;
