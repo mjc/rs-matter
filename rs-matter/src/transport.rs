@@ -2529,7 +2529,8 @@ impl<const N: usize> Packet<N> {
             && !self.peer.is_reliable()
             && !self.header.plain.is_encrypted()
             && !self.header.plain.is_group_session()
-            && self.header.plain.get_src_nodeid().is_none()
+            // Sessionless Check-In may carry an untrusted source node ID; the
+            // Check-In payload, not this header field, authenticates the peer.
             && self.header.plain.get_dst_unicast_nodeid().is_none()
             && self.header.plain.get_dst_groupcast_nodeid().is_none()
             && self.header.proto.is_initiator()
@@ -2942,7 +2943,7 @@ mod tests {
     }
 
     #[test]
-    fn sessionless_check_in_packet_filter_rejects_misframed_messages() {
+    fn sessionless_check_in_packet_filter_allows_source_node_id_and_rejects_misframed_messages() {
         let mut packet = Packet::<MAX_RX_BUF_SIZE>::new();
         OpCode::CheckIn.meta().set_into(&mut packet.header.proto);
         packet.header.proto.set_initiator();
@@ -2959,7 +2960,7 @@ mod tests {
         packet.peer = Address::new();
 
         packet.header.plain.set_src_nodeid(Some(7));
-        assert!(!packet.is_sessionless_icd_check_in());
+        assert!(packet.is_sessionless_icd_check_in());
         packet.header.plain.set_src_nodeid(None);
 
         packet.header.proto.set_ack(Some(1));
