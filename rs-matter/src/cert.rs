@@ -578,6 +578,11 @@ impl<'a> CertRef<'a> {
         Self(tlv)
     }
 
+    /// Return the encoded Matter TLV certificate.
+    pub const fn as_tlv(&self) -> &'a [u8] {
+        self.0.raw_data()
+    }
+
     fn serial_no(&self) -> Result<&[u8], Error> {
         self.0.structure()?.find_ctx(1)?.str()
     }
