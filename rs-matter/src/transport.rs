@@ -2967,7 +2967,10 @@ mod tests {
         assert!(!packet.is_sessionless_icd_check_in());
         packet.header.proto.set_ack(None);
 
-        OpCode::CheckIn.meta().reliable(true).set_into(&mut packet.header.proto);
+        OpCode::CheckIn
+            .meta()
+            .reliable(true)
+            .set_into(&mut packet.header.proto);
         packet.header.proto.set_initiator();
         assert!(!packet.is_sessionless_icd_check_in());
     }

@@ -161,11 +161,11 @@ impl<'a> BdxReader<'a> {
             }
             Outcome::BadCounter => {
                 self.exchange.rx_done()?;
-                abort(&mut self.exchange, BdxStatus::BadBlockCounter).await
+                super::nego::abort(&mut self.exchange, BdxStatus::BadBlockCounter).await
             }
             Outcome::Unexpected => {
                 self.exchange.rx_done()?;
-                abort(&mut self.exchange, BdxStatus::UnexpectedMessage).await
+                super::nego::abort(&mut self.exchange, BdxStatus::UnexpectedMessage).await
             }
             Outcome::Aborted(e) => {
                 self.exchange.rx_done()?;
@@ -267,7 +267,7 @@ impl<'a> BdxDownloadInitiator<'a> for Exchange<'a> {
                 };
                 Ok(BdxReader::new(self, drive, length))
             }
-            None => abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
+            None => super::nego::abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
         }
     }
 }
@@ -330,7 +330,8 @@ impl<'a> BdxUploadResponder<'a> {
             Drive::Driver
         } else {
             self.exchange.rx_done()?;
-            return abort(&mut self.exchange, BdxStatus::TransferMethodNotSupported).await;
+            return super::nego::abort(&mut self.exchange, BdxStatus::TransferMethodNotSupported)
+                .await;
         };
 
         // Cap the sender's proposed block size by what our RX buffer can hold.

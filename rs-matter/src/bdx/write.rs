@@ -205,8 +205,12 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
 
         match outcome {
             Outcome::Ok => Ok(()),
-            Outcome::BadCounter => abort(&mut self.exchange, BdxStatus::BadBlockCounter).await,
-            Outcome::Unexpected => abort(&mut self.exchange, BdxStatus::UnexpectedMessage).await,
+            Outcome::BadCounter => {
+                super::nego::abort(&mut self.exchange, BdxStatus::BadBlockCounter).await
+            }
+            Outcome::Unexpected => {
+                super::nego::abort(&mut self.exchange, BdxStatus::UnexpectedMessage).await
+            }
             Outcome::Aborted(e) => Err(e),
         }
     }
@@ -278,7 +282,7 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
                 };
                 Ok(BdxWriter::new(self, drive, buf, mbs))
             }
-            None => abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
+            None => super::nego::abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
         }
     }
 }
@@ -336,7 +340,8 @@ impl<'a> BdxDownloadResponder<'a> {
             // Our staging buffer is unusable, so we can never serve a block. Reject
             // the peer gracefully rather than panicking on the block-size clamp below.
             self.exchange.rx_done()?;
-            return abort(&mut self.exchange, BdxStatus::TransferFailedUnknownError).await;
+            return super::nego::abort(&mut self.exchange, BdxStatus::TransferFailedUnknownError)
+                .await;
         }
 
         // Prefer to let the initiating receiver drive (its `BdxReader` is the
@@ -348,7 +353,8 @@ impl<'a> BdxDownloadResponder<'a> {
             Drive::Driver
         } else {
             self.exchange.rx_done()?;
-            return abort(&mut self.exchange, BdxStatus::TransferMethodNotSupported).await;
+            return super::nego::abort(&mut self.exchange, BdxStatus::TransferMethodNotSupported)
+                .await;
         };
 
         // Cap the receiver's proposed block size by our staging buffer and TX buffer.

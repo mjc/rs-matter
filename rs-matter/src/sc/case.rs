@@ -22,13 +22,15 @@
 
 use crate::cert::MAX_CERT_TLV_LEN;
 
+#[cfg(feature = "alloc")]
 pub use initiator::CaseInitiator;
 pub use responder::CaseResponder;
 #[cfg(feature = "case-resumption")]
 pub use resumption::{ResumableSession, ResumableSessions, MAX_RESUMPTION_RECORDS};
 
 pub(crate) mod casep;
-mod initiator;
+#[cfg(feature = "alloc")]
+pub mod initiator;
 mod responder;
 #[cfg(feature = "case-resumption")]
 pub mod resumption;

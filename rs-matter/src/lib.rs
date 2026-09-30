@@ -570,15 +570,14 @@ impl<'a> Matter<'a> {
 
     pub(crate) fn release_pase_session(&self, id: u32) {
         let removed = self.with_state(|state| {
-            let is_pase = state
-                .sessions
-                .get(id)
-                .is_some_and(|session| matches!(session.get_session_mode(), SessionMode::Pase { .. }));
+            let is_pase = state.sessions.get(id).is_some_and(|session| {
+                matches!(session.get_session_mode(), SessionMode::Pase { .. })
+            });
             is_pase && state.sessions.remove(id).is_some()
         });
 
         if removed {
-            self.session_removed.notify();
+            self.transport.notify_session_removed();
         }
     }
 
@@ -755,6 +754,23 @@ impl<'a> Matter<'a> {
         F: FnOnce(&mut Rtc) -> R,
     {
         self.with_state(|state| f(&mut state.rtc))
+    }
+
+    /// Release exactly the CASE session owned by an outbound CASE handle.
+    #[cfg(feature = "alloc")]
+    pub(crate) fn release_case_session(&self, id: u32) {
+        let removed = self.with_state(|state| {
+            if state.sessions.get(id).is_some_and(|session| {
+                matches!(session.get_session_mode(), SessionMode::Case { .. })
+            }) {
+                state.sessions.remove(id).is_some()
+            } else {
+                false
+            }
+        });
+        if removed {
+            self.transport.notify_session_removed();
+        }
     }
 
     /// Reset the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer

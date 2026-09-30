@@ -35,9 +35,11 @@ use crate::error::{Error, ErrorCode};
 use crate::sc::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
+use crate::transport::network::Address;
 use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::ReadBuf;
+use crate::Matter;
 
 #[cfg(feature = "case-resumption")]
 use super::casep::{
@@ -75,6 +77,85 @@ struct TBEData2Decrypt<'a> {
     responder_icac: Option<OctetStr<'a>>,
     signature: OctetStr<'a>,
     resumption_id: OctetStr<'a>,
+}
+
+/// Operational identity that a CASE peer must prove before Sigma3 is sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExpectedPeerIdentity {
+    fabric_id: u64,
+    node_id: u64,
+}
+
+impl ExpectedPeerIdentity {
+    pub const fn new(fabric_id: u64, node_id: u64) -> Self {
+        Self { fabric_id, node_id }
+    }
+
+    pub const fn fabric_id(self) -> u64 {
+        self.fabric_id
+    }
+
+    pub const fn node_id(self) -> u64 {
+        self.node_id
+    }
+}
+
+/// Peer certificate policy supplied by the application and checked before Sigma3.
+pub trait CasePeerVerifier<C: Crypto> {
+    fn verify_chain(
+        &self,
+        crypto: &C,
+        root_ca: &[u8],
+        expected: ExpectedPeerIdentity,
+        noc: &CertRef<'_>,
+        icac: Option<&CertRef<'_>>,
+    ) -> Result<(), Error>;
+}
+
+/// Peer identity established from the authenticated operational certificate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifiedPeerIdentity {
+    fabric_id: u64,
+    node_id: u64,
+}
+
+impl VerifiedPeerIdentity {
+    pub const fn fabric_id(self) -> u64 {
+        self.fabric_id
+    }
+
+    pub const fn node_id(self) -> u64 {
+        self.node_id
+    }
+}
+
+/// Owns one successfully established CASE session and releases exactly that
+/// session when dropped.
+pub struct EstablishedCaseSession<'a, C: Crypto + 'a> {
+    matter: &'a Matter<'a>,
+    crypto: &'a C,
+    session_id: u32,
+    peer: VerifiedPeerIdentity,
+}
+
+impl<'a, C: Crypto> EstablishedCaseSession<'a, C> {
+    pub const fn session_id(&self) -> u32 {
+        self.session_id
+    }
+
+    pub const fn peer_identity(&self) -> VerifiedPeerIdentity {
+        self.peer
+    }
+
+    pub fn open_exchange(&self) -> Result<Exchange<'a>, Error> {
+        Exchange::initiate_for_session(self.matter, self.crypto, self.session_id)
+    }
+}
+
+impl<C: Crypto> Drop for EstablishedCaseSession<'_, C> {
+    fn drop(&mut self) {
+        self.matter.release_case_session(self.session_id);
+    }
 }
 
 /// Sigma2_Resume response, parsed from the responder's message when it
@@ -139,11 +220,45 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
     /// - `fab_idx` - The fabric index to use for the handshake
     /// - `peer_node_id` - The node ID of the target device
     pub async fn perform(
-        mut exchange: Exchange<'_>,
+        exchange: Exchange<'a>,
         crypto: &'a C,
         fab_idx: NonZeroU8,
         peer_node_id: u64,
     ) -> Result<(), Error> {
+        Self::perform_inner(exchange, crypto, fab_idx, peer_node_id, None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Establish a CASE session for a pinned peer, verifying its operational
+    /// identity and application certificate policy before sending Sigma3.
+    pub async fn connect(
+        matter: &'a Matter<'a>,
+        crypto: &'a C,
+        fab_idx: NonZeroU8,
+        expected: ExpectedPeerIdentity,
+        peer_addr: Address,
+        verifier: &'a dyn CasePeerVerifier<C>,
+    ) -> Result<EstablishedCaseSession<'a, C>, Error> {
+        let exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
+        Self::perform_inner(
+            exchange,
+            crypto,
+            fab_idx,
+            expected.node_id(),
+            Some((expected, verifier)),
+        )
+        .await?
+        .ok_or(ErrorCode::InvalidState.into())
+    }
+
+    async fn perform_inner(
+        mut exchange: Exchange<'a>,
+        crypto: &'a C,
+        fab_idx: NonZeroU8,
+        peer_node_id: u64,
+        strict_peer: Option<(ExpectedPeerIdentity, &'a dyn CasePeerVerifier<C>)>,
+    ) -> Result<Option<EstablishedCaseSession<'a, C>>, Error> {
         // Step 1: Reserve a session slot
         let mut session = ReservedSession::reserve(exchange.matter(), crypto).await?;
 
@@ -158,12 +273,18 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // Without the `case-resumption` feature there is no cache, so we
         // never offer resumption and always run the full handshake.
         #[cfg(feature = "case-resumption")]
-        let cached_record: Option<ResumableSession> = exchange.with_state(|state| {
-            Ok(state
-                .resumption
-                .find_by_peer(fab_idx, peer_node_id)
-                .cloned())
-        })?;
+        let cached_record: Option<ResumableSession> = if strict_peer.is_none() {
+            exchange.with_state(|state| {
+                Ok(state
+                    .resumption
+                    .find_by_peer(fab_idx, peer_node_id)
+                    .cloned())
+            })?
+        } else {
+            // Sigma2_Resume omits the peer operational certificate, so the
+            // strict verifier cannot authenticate a resumed peer.
+            None
+        };
 
         let mut random = MaybeUninit::<CaseRandom>::uninit();
         let random = random.init_with(CaseRandom::init());
@@ -290,7 +411,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 return Err(ErrorCode::Invalid.into());
             };
 
-            return Self::finalize_sigma2_resume(
+            Self::finalize_sigma2_resume(
                 &mut exchange,
                 crypto,
                 session,
@@ -299,7 +420,8 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 record,
                 random,
             )
-            .await;
+            .await?;
+            return Ok(None);
         }
 
         if response_opcode != OpCode::CASESigma2 as u8 {
@@ -315,7 +437,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // spec-mandated in full CASE) is only consumed to seed the resumption
         // cache, so it is unused when `case-resumption` is off.
         #[cfg_attr(not(feature = "case-resumption"), allow(unused_variables))]
-        let (peer_catids, peer_resumption_id) = {
+        let (peer_catids, peer_resumption_id, verified_peer) = {
             let rx = exchange.rx()?;
             let raw_sigma2_payload = rx.payload();
 
@@ -401,6 +523,20 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                     Err(ErrorCode::Invalid)?;
                 }
 
+                let peer_fabric_id = responder_noc.get_fabric_id()?;
+                if let Some((expected, verifier)) = strict_peer {
+                    if peer_fabric_id != expected.fabric_id() {
+                        return Err(ErrorCode::Invalid.into());
+                    }
+                    verifier.verify_chain(
+                        crypto,
+                        fabric.root_ca(),
+                        expected,
+                        &responder_noc,
+                        icac_cert.as_ref(),
+                    )?;
+                }
+
                 // Verify signature
                 initiator
                     .casep
@@ -426,7 +562,14 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                     .access_mut()
                     .copy_from_slice(decrypted_data.resumption_id.0);
 
-                Ok((peer_catids, resumption_id))
+                Ok((
+                    peer_catids,
+                    resumption_id,
+                    VerifiedPeerIdentity {
+                        fabric_id: peer_fabric_id,
+                        node_id: responder_noc.get_node_id()?,
+                    },
+                ))
             });
 
             if result.is_err() {
@@ -547,6 +690,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             )?;
         }
 
+        let session_id = session.id();
         session.complete();
 
         exchange.acknowledge().await?;
@@ -579,7 +723,16 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             initiator.casep.peer_sessid()
         );
 
-        Ok(())
+        if strict_peer.is_some() {
+            Ok(Some(EstablishedCaseSession {
+                matter: exchange.matter(),
+                crypto,
+                session_id,
+                peer: verified_peer,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Complete a CASE resumption from the initiator side, given that

@@ -60,18 +60,19 @@ pub struct PaseInitiator<C: Crypto> {
 
 /// Owns the PASE session established by a successful handshake.
 /// Exchanges opened from this handle always use its exact session ID.
-pub struct EstablishedPaseSession<'a> {
+pub struct EstablishedPaseSession<'a, C: Crypto> {
     matter: &'a Matter<'a>,
+    crypto: C,
     session_id: u32,
 }
 
-impl<'a> EstablishedPaseSession<'a> {
+impl<'a, C: Crypto> EstablishedPaseSession<'a, C> {
     pub fn session_id(&self) -> u32 {
         self.session_id
     }
 
     pub fn open_exchange(&self) -> Result<Exchange<'_>, Error> {
-        Exchange::initiate_for_session(self.matter, self.session_id)
+        Exchange::initiate_for_session(self.matter, &self.crypto, self.session_id)
     }
 
     pub fn attestation_challenge(&self) -> Result<[u8; 16], Error> {
@@ -79,7 +80,7 @@ impl<'a> EstablishedPaseSession<'a> {
     }
 }
 
-impl Drop for EstablishedPaseSession<'_> {
+impl<C: Crypto> Drop for EstablishedPaseSession<'_, C> {
     fn drop(&mut self) {
         self.matter.release_pase_session(self.session_id);
     }
@@ -123,7 +124,7 @@ impl<C: Crypto> PaseInitiator<C> {
         mut exchange: Exchange<'a>,
         crypto: C,
         password: u32,
-    ) -> Result<EstablishedPaseSession<'a>, Error> {
+    ) -> Result<EstablishedPaseSession<'a, C>, Error> {
         let session = ReservedSession::reserve(exchange.matter(), &crypto).await?;
         let session_id = session.id();
 
@@ -160,6 +161,7 @@ impl<C: Crypto> PaseInitiator<C> {
         initiator.complete_session(&mut exchange, session).await?;
         Ok(EstablishedPaseSession {
             matter: exchange.matter(),
+            crypto: initiator.crypto,
             session_id,
         })
     }
