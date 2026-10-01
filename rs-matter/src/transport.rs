@@ -22,6 +22,8 @@ use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
 use domain::base::name::ToLabelIter;
+#[cfg(all(feature = "large-buffers", feature = "alloc"))]
+use pinned_init::InPlaceInit;
 
 #[cfg(feature = "groups")]
 use embassy_futures::select::select4;
@@ -219,6 +221,34 @@ impl Transport {
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         })
+    }
+
+    /// Allocate RX and TX buffers on the heap when large buffers and `alloc`
+    /// are enabled. Call this before starting the transport runner.
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub fn initialize_buffers(&self) -> Result<(), Error> {
+        let mut rx = self.rx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
+        let mut tx = self.tx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
+
+        if rx.buf.buffer.is_none() {
+            rx.buf.buffer = Some(
+                crate::alloc::boxed::Box::init(crate::utils::storage::Vec::init())
+                    .map_err(|_| ErrorCode::NoMemory)?,
+            );
+        }
+        if tx.buf.buffer.is_none() {
+            tx.buf.buffer = Some(
+                crate::alloc::boxed::Box::init(crate::utils::storage::Vec::init())
+                    .map_err(|_| ErrorCode::NoMemory)?,
+            );
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
+    pub fn initialize_buffers(&self) -> Result<(), Error> {
+        Ok(())
     }
 
     /// Wait for an incoming plaintext, sessionless ICD Check-In packet.
@@ -2758,11 +2788,23 @@ impl defmt::Format for DetailedPacketInfo<'_> {
 // `Matter` is not moved through a small stack.
 //
 // This type is only known and used by the `transport` and the `exchange` modules
+#[cfg(all(feature = "large-buffers", feature = "alloc"))]
+pub(crate) struct PacketBuffer<const N: usize> {
+    buffer: Option<crate::alloc::boxed::Box<crate::utils::storage::Vec<u8, N>>>,
+}
+
+#[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
 pub(crate) struct PacketBuffer<const N: usize> {
     buffer: crate::utils::storage::Vec<u8, N>,
 }
 
 impl<const N: usize> PacketBuffer<N> {
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub const fn new() -> Self {
+        Self { buffer: None }
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
     pub const fn new() -> Self {
         Self {
             buffer: crate::utils::storage::Vec::new(),
@@ -2770,15 +2812,39 @@ impl<const N: usize> PacketBuffer<N> {
     }
 
     pub fn init() -> impl Init<Self> {
+        #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+        {
+            return init!(Self { buffer: None });
+        }
+
+        #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
         init!(Self {
             buffer <- crate::utils::storage::Vec::init(),
         })
     }
 
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub fn buf_mut(&mut self) -> &mut crate::utils::storage::Vec<u8, N> {
+        unwrap!(
+            self.buffer.as_mut().map(|buffer| &mut **buffer),
+            "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
+        )
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
     pub fn buf_mut(&mut self) -> &mut crate::utils::storage::Vec<u8, N> {
         &mut self.buffer
     }
 
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub fn buf_ref(&self) -> &crate::utils::storage::Vec<u8, N> {
+        unwrap!(
+            self.buffer.as_ref().map(|buffer| &**buffer),
+            "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
+        )
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
     pub fn buf_ref(&self) -> &crate::utils::storage::Vec<u8, N> {
         &self.buffer
     }

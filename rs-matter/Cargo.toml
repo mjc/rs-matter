@@ -177,7 +177,7 @@ std = ["alloc", "rand"]
 backtrace = []
 # Enable the alloc feature for targets that support it.
 # In general, `rs-matter` does not use heap, so this feature enables only a few convenience features.
-alloc = ["defmt?/alloc"]
+alloc = ["defmt?/alloc", "pinned-init/alloc"]
 # Crypto backend: Rust Crypto.
 rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha1", "sha2", "aes", "p256", "x509-cert"]
 # Crypto backend: OpenSSL (not usable for baremetal targets, only for OS targets with OpenSSL installed).
