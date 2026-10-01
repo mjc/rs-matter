@@ -37,3 +37,11 @@ pub mod resumption;
 
 // Two certificates (NOC and ICAC), plus ECDSA etc -> approx 950b, doing 1024 to be safe
 const CASE_LARGE_BUF_SIZE: usize = MAX_CERT_TLV_LEN * 2 + 224;
+
+/// Authenticated peer identity and source address returned by the CASE responder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CasePeerIdentity {
+    pub fabric_index: core::num::NonZeroU8,
+    pub node_id: u64,
+    pub address: crate::transport::network::Address,
+}

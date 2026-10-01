@@ -28,7 +28,7 @@ use super::casep::{
 use super::casep::{CaseP, CaseRandom, CaseResumptionId, CaseSessionKeys};
 #[cfg(feature = "case-resumption")]
 use super::resumption::ResumableSession;
-use super::CASE_LARGE_BUF_SIZE;
+use super::{CasePeerIdentity, CASE_LARGE_BUF_SIZE};
 use crate::alloc;
 use crate::cert::CertRef;
 #[cfg(feature = "case-resumption")]
@@ -113,7 +113,16 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
     ///
     /// Consumes the exchange: on return the CASE handshake has either
     /// completed, been rejected, or aborted, and the exchange is dropped.
-    pub async fn handle(&mut self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+    pub async fn handle(&mut self, exchange: Exchange<'_>) -> Result<(), Error> {
+        self.handle_with_identity(exchange).await.map(|_| ())
+    }
+
+    /// Handle CASE and return the peer identity only after its certificate chain and
+    /// Sigma3 signature have both been authenticated.
+    pub async fn handle_with_identity(
+        &mut self,
+        mut exchange: Exchange<'_>,
+    ) -> Result<Option<CasePeerIdentity>, Error> {
         let session = ReservedSession::reserve(exchange.matter(), self.crypto).await?;
 
         // Attempt session resumption first. If the peer's Sigma1 carries
@@ -128,13 +137,15 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         // is spec-compliant (resumption is optional) — a peer that offered
         // resumption fields simply gets a full Sigma2 back.
         #[cfg(feature = "case-resumption")]
-        let session = match self
+        let (session, resumed_peer) = match self
             .try_handle_sigma1_resume(&mut exchange, session)
             .await?
         {
-            None => return Ok(()),
-            Some(session) => session,
+            None => return Ok(None),
+            Some(session) => (session, None),
         };
+        #[cfg(not(feature = "case-resumption"))]
+        let resumed_peer: Option<CasePeerIdentity> = None;
 
         let mut session = session;
 
@@ -142,11 +153,11 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
 
         exchange.recv_fetch().await?;
 
-        self.handle_casesigma3(&mut exchange, session).await?;
+        let peer = self.handle_casesigma3(&mut exchange, session).await?;
 
         exchange.acknowledge().await?;
 
-        Ok(())
+        Ok(peer.or(resumed_peer))
     }
 
     /// Handle the CASE Sigma1 message
@@ -315,10 +326,10 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         &mut self,
         exchange: &mut Exchange<'_>,
         mut session: ReservedSession<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<CasePeerIdentity>, Error> {
         expect_opcode(exchange, OpCode::CASESigma3).await?;
 
-        let status = exchange.with_state(|state| {
+        let (status, peer) = exchange.with_state(|state| {
             let sess = exchange.id().session(&mut state.sessions);
 
             let fabric = NonZeroU8::new(self.casep.local_fabric_idx())
@@ -334,14 +345,14 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     Ok(req) => req,
                     Err(e) => {
                         error!("Sigma3 outer TLV parse failed: {}", e);
-                        return Ok(SCStatusCodes::InvalidParameter);
+                        return Ok((SCStatusCodes::InvalidParameter, None));
                     }
                 };
                 let encrypted = match req.structure().and_then(|s| s.ctx(1)).and_then(|c| c.str()) {
                     Ok(s) => s,
                     Err(e) => {
                         error!("Sigma3 encrypted field parse failed: {}", e);
-                        return Ok(SCStatusCodes::InvalidParameter);
+                        return Ok((SCStatusCodes::InvalidParameter, None));
                     }
                 };
 
@@ -351,7 +362,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                         "Encrypted Sigma3 data too large ({} bytes)",
                         encrypted.len()
                     );
-                    return Ok(SCStatusCodes::InvalidParameter);
+                    return Ok((SCStatusCodes::InvalidParameter, None));
                 }
 
                 let decrypted = &mut decrypted[..encrypted.len()];
@@ -365,7 +376,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                         Ok(len) => len,
                         Err(e) => {
                             error!("Sigma3 AEAD decrypt failed: {}", e);
-                            return Ok(SCStatusCodes::InvalidParameter);
+                            return Ok((SCStatusCodes::InvalidParameter, None));
                         }
                     };
                 let decrypted = &decrypted[..len];
@@ -375,7 +386,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     Ok(req) => req,
                     Err(e) => {
                         error!("Sigma3 decrypted TLV parse failed: {}", e);
-                        return Ok(SCStatusCodes::InvalidParameter);
+                        return Ok((SCStatusCodes::InvalidParameter, None));
                     }
                 };
 
@@ -395,7 +406,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     buf,
                 ) {
                     error!("Certificate Chain doesn't match: {}", e);
-                    Ok(SCStatusCodes::InvalidParameter)
+                    Ok((SCStatusCodes::InvalidParameter, None))
                 } else if let Err(e) = self.casep.validate_peer_tbs_signature(
                     self.crypto,
                     decrypted_req.initiator_noc.0,
@@ -405,7 +416,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     buf,
                 ) {
                     error!("Sigma3 Signature doesn't match: {}", e);
-                    Ok(SCStatusCodes::InvalidParameter)
+                    Ok((SCStatusCodes::InvalidParameter, None))
                 } else {
                     // Only now do we add this message to the TT Hash
                     let mut peer_catids: NocCatIds = Default::default();
@@ -421,6 +432,11 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     )?;
 
                     let peer_addr = sess.get_peer_addr();
+                    let peer = CasePeerIdentity {
+                        fabric_index: unwrap!(NonZeroU8::new(self.casep.local_fabric_idx())),
+                        node_id: initiator_noc.get_node_id()?,
+                        address: peer_addr,
+                    };
 
                     let (dec_key, remaining) = session_keys
                         .reference()
@@ -431,7 +447,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     session.update_with_state(
                         state,
                         fabric.node_id(),
-                        initiator_noc.get_node_id()?,
+                        peer.node_id,
                         self.casep.peer_sessid(),
                         self.casep.local_sessid(),
                         peer_addr,
@@ -467,10 +483,10 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                         ),
                     });
 
-                    Ok(SCStatusCodes::SessionEstablishmentSuccess)
+                    Ok((SCStatusCodes::SessionEstablishmentSuccess, Some(peer)))
                 }
             } else {
-                Ok(SCStatusCodes::NoSharedTrustRoots)
+                Ok((SCStatusCodes::NoSharedTrustRoots, None))
             }
         })?;
 
@@ -490,7 +506,8 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             exchange.matter().transport().notify_resumption_dirty();
         }
 
-        complete_with_status(exchange, status, &[]).await
+        complete_with_status(exchange, status, &[]).await?;
+        Ok(peer)
     }
 
     /// Try to handle the received Sigma1 as a session-resumption
