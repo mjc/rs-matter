@@ -3,6 +3,7 @@
 #[allow(dead_code)]
 mod common;
 
+use core::future::Future;
 use rs_matter::cert::{gen::VALID_FOREVER, CertRef, MAX_CERT_TLV_AND_ASN1_LEN};
 use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Rng, SecretKey,
@@ -11,9 +12,12 @@ use rs_matter::crypto::{
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::onboard::{cac::RcacGenerator, noc::NocGenerator};
-use rs_matter::respond::Responder;
+
+use rs_matter::respond::{ExchangeHandler, Responder};
 use rs_matter::sc::case::initiator::{CaseInitiator, CasePeerVerifier, ExpectedPeerIdentity};
-use rs_matter::sc::SecureChannel;
+use rs_matter::sc::case::{CasePeerIdentity, CaseResponder};
+use rs_matter::sc::OpCode;
+use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NoNetwork};
 use rs_matter::Matter;
 
@@ -48,6 +52,27 @@ impl<C: Crypto> CasePeerVerifier<C> for AcceptExpectedPeer {
     }
 }
 
+struct CaseIdentityHandler<'a, C> {
+    crypto: &'a C,
+    peers: std::sync::mpsc::Sender<CasePeerIdentity>,
+}
+
+impl<C: Crypto> ExchangeHandler for CaseIdentityHandler<'_, C> {
+    fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+        async move {
+            exchange.recv_fetch().await?;
+            if exchange.rx()?.meta().opcode::<OpCode>()? == OpCode::CASESigma1 {
+                if let Some(peer) = CaseResponder::new(self.crypto)
+                    .handle_with_identity(exchange)
+                    .await?
+                {
+                    let _ = self.peers.send(peer);
+                }
+            }
+            Ok(())
+        }
+    }
+}
 #[test]
 fn case_initiator_authenticates_peer_and_owns_session() {
     init_env_logger();
@@ -132,8 +157,17 @@ fn case_initiator_authenticates_peer_and_owns_session() {
 
         let (device_socket, controller_socket) = create_localhost_socket_pair();
         let peer_addr = Address::Udp(device_socket.get_ref().local_addr().unwrap());
-        let sc = SecureChannel::new(&crypto, &());
-        let responder = Responder::new("device", sc, &device_matter, 0);
+        let case_peer_addr = Address::Udp(controller_socket.get_ref().local_addr().unwrap());
+        let (case_peer_tx, case_peer_rx) = std::sync::mpsc::channel();
+        let responder = Responder::new(
+            "case-identity",
+            CaseIdentityHandler {
+                crypto: &crypto,
+                peers: case_peer_tx,
+            },
+            &device_matter,
+            0,
+        );
         let device_fut = async {
             futures_lite::future::race(
                 device_matter.run(&crypto, &device_socket, &device_socket, NoNetwork),
@@ -163,6 +197,12 @@ fn case_initiator_authenticates_peer_and_owns_session() {
                 drop(handle);
                 assert!(!controller_matter
                     .has_operational_case_session_for_peer(fab_idx, DEVICE_NODE_ID));
+                let case_peer = case_peer_rx
+                    .try_recv()
+                    .expect("CASE responder returns the authenticated peer identity");
+                assert_eq!(case_peer.fabric_index, fab_idx);
+                assert_eq!(case_peer.node_id, CONTROLLER_NODE_ID);
+                assert_eq!(case_peer.address, case_peer_addr);
                 Ok(())
             },
         );
