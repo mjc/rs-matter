@@ -231,16 +231,10 @@ impl Transport {
         let mut tx = self.tx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
 
         if rx.buf.buffer.is_none() {
-            rx.buf.buffer = Some(
-                crate::alloc::boxed::Box::init(crate::utils::storage::Vec::init())
-                    .map_err(|_| ErrorCode::NoMemory)?,
-            );
+            rx.buf.buffer = Some(allocate_large_buffer()?);
         }
         if tx.buf.buffer.is_none() {
-            tx.buf.buffer = Some(
-                crate::alloc::boxed::Box::init(crate::utils::storage::Vec::init())
-                    .map_err(|_| ErrorCode::NoMemory)?,
-            );
+            tx.buf.buffer = Some(allocate_large_buffer()?);
         }
 
         Ok(())
@@ -2864,6 +2858,30 @@ impl<const N: usize> DerefMut for PacketBuffer<N> {
     }
 }
 
+#[cfg(all(feature = "large-buffers", feature = "alloc"))]
+fn allocate_large_buffer<const N: usize>(
+) -> Result<crate::alloc::boxed::Box<crate::utils::storage::Vec<u8, N>>, Error> {
+    use core::alloc::Layout;
+
+    type Buffer<const N: usize> = crate::utils::storage::Vec<u8, N>;
+    let layout = Layout::new::<Buffer<N>>();
+    // Allocate first, then initialize the large inline array directly in heap memory.
+    // SAFETY: Buffer<N> is non-zero-sized because it contains its length field. The pointer is
+    // checked below and the allocator receives the layout's required alignment.
+    let pointer = unsafe { crate::alloc::alloc::alloc(layout) }.cast::<Buffer<N>>();
+    if pointer.is_null() {
+        return Err(ErrorCode::NoMemory.into());
+    }
+
+    // SAFETY: this is a fresh allocation with the correct layout and alignment. It has no aliases,
+    // and the in-place initializer fully initializes the Vec metadata before ownership transfers.
+    unsafe { Buffer::init().__init(pointer) }.unwrap_or_else(|never| match never {});
+
+    // SAFETY: initialization succeeded and this is the unique ownership transfer. Box will free
+    // the same layout through the global allocator when dropped.
+    Ok(unsafe { crate::alloc::boxed::Box::from_raw(pointer) })
+}
+
 // Represents the fact that either `Transport` or some `Exchange` instace has an exclusive access to the
 // RX or TX packet of the transport layer.
 //
@@ -3006,6 +3024,26 @@ mod tests {
 
     fn test_matter() -> Matter<'static> {
         Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0)
+    }
+
+    #[cfg(all(feature = "large-buffers", feature = "alloc", feature = "std"))]
+    #[test]
+    fn large_transport_buffers_initialize_in_place_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let matter = test_matter();
+                matter.transport().initialize_buffers().unwrap();
+                matter.transport().initialize_buffers().unwrap();
+
+                let mut buffer = allocate_large_buffer::<MAX_RX_BUF_SIZE>().unwrap();
+                buffer.resize(MAX_RX_BUF_SIZE, 0).unwrap();
+                assert_eq!(buffer.len(), MAX_RX_BUF_SIZE);
+                assert!(buffer.is_full());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
