@@ -1138,6 +1138,27 @@ impl<'a> Exchange<'a> {
         })
     }
 
+    /// Return the transport address of the authenticated CASE peer.
+    ///
+    /// # Errors
+    /// Returns [`ErrorCode::NoSession`] if the session has been removed, or
+    /// [`ErrorCode::InvalidState`] for PASE or plaintext sessions.
+    pub fn authenticated_peer_addr(&self) -> Result<network::Address, Error> {
+        self.matter.with_state(|state| {
+            let session = state
+                .sessions
+                .get(self.id.session_id())
+                .ok_or(ErrorCode::NoSession)?;
+            if !matches!(
+                session.get_session_mode(),
+                super::session::SessionMode::Case { .. }
+            ) {
+                return Err(ErrorCode::InvalidState.into());
+            }
+            Ok(session.get_peer_addr())
+        })
+    }
+
     /// Create a new initiator exchange on the provided Matter stack for the provided peer Node ID.
     ///
     /// If a CASE session for `(fabric_idx, peer_node_id)` already exists, an
@@ -1809,10 +1830,18 @@ mod tests {
             plain.authenticated_peer_identity().unwrap_err().code(),
             ErrorCode::InvalidState
         );
+        assert_eq!(
+            plain.authenticated_peer_addr().unwrap_err().code(),
+            ErrorCode::InvalidState
+        );
         let pase_id = add_pase_session(&matter, &[0; 16]);
         let pase = Exchange::initiate_for_session(&matter, pase_id).unwrap();
         assert_eq!(
             pase.authenticated_peer_identity().unwrap_err().code(),
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            pase.authenticated_peer_addr().unwrap_err().code(),
             ErrorCode::InvalidState
         );
         matter
@@ -1828,15 +1857,20 @@ mod tests {
             pase.authenticated_peer_identity().unwrap_err().code(),
             ErrorCode::InvalidState
         );
+        assert_eq!(
+            pase.authenticated_peer_addr().unwrap_err().code(),
+            ErrorCode::InvalidState
+        );
         let mut reserved = ReservedSession::reserve_now(&matter, test_only_crypto()).unwrap();
         let session_id = reserved.id();
+        let peer_addr = network::Address::Tcp("127.0.0.1:5540".parse().unwrap());
         reserved
             .update(
                 112233,
                 42,
                 7,
                 8,
-                network::Address::new(),
+                peer_addr,
                 SessionMode::Case {
                     fab_idx: core::num::NonZeroU8::new(3).unwrap(),
                     cat_ids: Default::default(),
@@ -1849,9 +1883,14 @@ mod tests {
         reserved.complete();
         let case = Exchange::initiate_for_session(&matter, session_id).unwrap();
         assert_eq!(case.authenticated_peer_identity().unwrap(), (3, 42));
+        assert_eq!(case.authenticated_peer_addr().unwrap(), peer_addr);
         matter.with_state(|state| state.sessions.remove(session_id).unwrap());
         assert_eq!(
             case.authenticated_peer_identity().unwrap_err().code(),
+            ErrorCode::NoSession
+        );
+        assert_eq!(
+            case.authenticated_peer_addr().unwrap_err().code(),
             ErrorCode::NoSession
         );
     }
