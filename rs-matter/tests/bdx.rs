@@ -622,6 +622,95 @@ impl ExchangeHandler for WaitForUploadCancelHandler<'_> {
     }
 }
 
+/// Select receiver-driven upload and wait for cancellation instead of the
+/// requestor's first BlockQuery.
+struct PauseBeforeUploadBlockQueryHandler<'a>(&'a AtomicBool);
+
+impl ExchangeHandler for PauseBeforeUploadBlockQueryHandler<'_> {
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        exchange.recv_fetch().await?;
+        assert_eq!(
+            exchange.rx()?.meta().proto_opcode,
+            bdx::OpCode::SendInit as u8
+        );
+        exchange.rx_done()?;
+        exchange
+            .send_with(|_, wb| {
+                bdx::TransferAccept {
+                    receive: false,
+                    transfer_control: bdx::TransferControl {
+                        version: bdx::BDX_VERSION,
+                        sender_drive: false,
+                        receiver_drive: true,
+                        async_mode: false,
+                    },
+                    range_control: bdx::RangeControl::default(),
+                    max_block_size: 128,
+                    length: 0,
+                    metadata: &[],
+                }
+                .write(wb)?;
+                Ok(Some(bdx::OpCode::SendAccept.into()))
+            })
+            .await?;
+
+        // A BlockQuery or data block here means the dropped commit resumed the
+        // transfer instead of allowing its caller to abort it.
+        exchange.recv_fetch().await?;
+        let meta = exchange.rx()?.meta();
+        assert_eq!(meta.proto_id, rs_matter::sc::PROTO_ID_SECURE_CHANNEL);
+        assert_eq!(meta.proto_opcode, ScOpCode::StatusReport as u8);
+        let (proto_id, proto_code) = {
+            let mut rb = ReadBuf::new(exchange.rx()?.payload());
+            let status = StatusReport::read(&mut rb)?;
+            (status.proto_id, status.proto_code)
+        };
+        assert_eq!(proto_id, bdx::PROTO_ID_BDX as u32);
+        assert_eq!(
+            proto_code,
+            bdx::BdxStatus::TransferFailedUnknownError as u16
+        );
+        exchange.rx_done()?;
+        self.0.store(true, Ordering::Release);
+        Ok(())
+    }
+}
+
+/// Mirrors the server download path: the responder sends one requested block,
+/// then a second commit waits for the requestor's next BlockQuery. Cancellation
+/// must replace that pending commit with a BDX failure report.
+struct CancelDownloadAfterFirstBlockHandler<'a>(&'a AtomicUsize);
+
+impl ExchangeHandler for CancelDownloadAfterFirstBlockHandler<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        assert_eq!(responder.fd(), FILE_DESIGNATOR);
+
+        let mut buf = [0u8; 1024];
+        let mut writer = responder.reply(&mut buf, Some(2048)).await?;
+
+        writer.block_buf()[..1024].fill(0xA5);
+        writer.commit(1024).await?;
+        self.0.store(1, Ordering::Release);
+
+        writer.block_buf()[..1024].fill(0x5A);
+        let pending = {
+            let mut commit = core::pin::pin!(writer.commit(1024));
+            core::future::poll_fn(|cx| match commit.as_mut().poll(cx) {
+                Poll::Pending => Poll::Ready(true),
+                Poll::Ready(_) => Poll::Ready(false),
+            })
+            .await
+        };
+        assert!(pending, "second commit must wait for BlockQuery counter 1");
+        self.0.store(2, Ordering::Release);
+
+        writer.cancel().await?;
+        self.0.store(3, Ordering::Release);
+        Ok(())
+    }
+}
+
 /// Accept a receiver-driven download, send one block, then finish the handler.
 /// This lets the client simulate a transport/session failure before cancellation.
 struct EndAfterFirstBlockHandler;
@@ -774,6 +863,157 @@ fn test_bdx_writer_cancel_sends_status_and_stops_transfer() {
                     Ok::<_, Error>(())
                 })
                 .await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// A pending receiver-driven block commit can be dropped and cancelled. The
+/// requestor has not sent its first BlockQuery, so only the abort report is valid.
+#[test]
+fn test_bdx_writer_cancel_after_pending_commit() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let report_received = AtomicBool::new(false);
+
+    futures_lite::future::block_on(async {
+        select(
+            runner.run_responder(PauseBeforeUploadBlockQueryHandler(&report_received)),
+            async {
+                let exchange = runner.initiate_exchange().await?;
+                let mut tx_buf = [0u8; 128];
+                let mut writer = exchange.upload(&mut tx_buf, FILE_DESIGNATOR, None).await?;
+                writer.write(b"block data").await?;
+
+                let commit_pending = {
+                    let mut commit = core::pin::pin!(writer.commit(10));
+                    core::future::poll_fn(|cx| match commit.as_mut().poll(cx) {
+                        Poll::Pending => Poll::Ready(true),
+                        Poll::Ready(_) => Poll::Ready(false),
+                    })
+                    .await
+                };
+                assert!(commit_pending, "commit should wait for BlockQuery");
+
+                with_timeout(async {
+                    writer.cancel().await?;
+                    assert!(writer.write(b"later").await.is_err());
+                    core::future::poll_fn(|cx| {
+                        if report_received.load(Ordering::Acquire) {
+                            Poll::Ready(())
+                        } else {
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                    })
+                    .await;
+                    Ok::<_, Error>(())
+                })
+                .await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// The production download negotiation transfers block 0, then pauses before
+/// requesting block 1. A dropped second commit must be cancellable and must not
+/// send block 1 after the failure report.
+#[test]
+fn test_bdx_download_writer_cancel_after_second_commit_pending() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let server_phase = AtomicUsize::new(0);
+
+    futures_lite::future::block_on(async {
+        select(
+            runner.run_responder(CancelDownloadAfterFirstBlockHandler(&server_phase)),
+            async {
+                let mut exchange = runner.initiate_exchange().await?;
+                exchange
+                    .send_with(|_, wb| {
+                        bdx::TransferInit {
+                            transfer_control: bdx::TransferControl {
+                                version: bdx::BDX_VERSION,
+                                sender_drive: true,
+                                receiver_drive: true,
+                                async_mode: false,
+                            },
+                            range_control: bdx::RangeControl::default(),
+                            max_block_size: 1024,
+                            start_offset: 0,
+                            length: 0,
+                            file_designator: FILE_DESIGNATOR,
+                            metadata: &[],
+                        }
+                        .write(wb)?;
+                        Ok(Some(bdx::OpCode::ReceiveInit.into()))
+                    })
+                    .await?;
+
+                exchange.recv_fetch().await?;
+                let accept = bdx::TransferAccept::parse(true, exchange.rx()?.payload())?;
+                assert!(accept.transfer_control.receiver_drive);
+                assert!(!accept.transfer_control.sender_drive);
+                assert_eq!(accept.max_block_size, 1024);
+                exchange.rx_done()?;
+
+                exchange
+                    .send_with(|_, wb| {
+                        bdx::BlockQuery { block_counter: 0 }.write(wb)?;
+                        Ok(Some(bdx::OpCode::BlockQuery.into()))
+                    })
+                    .await?;
+
+                exchange.recv_fetch().await?;
+                assert_eq!(exchange.rx()?.meta().proto_opcode, bdx::OpCode::Block as u8);
+                let block = bdx::Block::parse(exchange.rx()?.payload())?;
+                assert_eq!(block.block_counter, 0);
+                assert_eq!(block.data, &[0xA5; 1024]);
+                exchange.rx_done()?;
+                exchange.acknowledge().await?;
+
+                exchange.recv_fetch().await?;
+                let meta = exchange.rx()?.meta();
+                assert_eq!(meta.proto_id, rs_matter::sc::PROTO_ID_SECURE_CHANNEL);
+                assert_eq!(meta.proto_opcode, ScOpCode::StatusReport as u8);
+                let (proto_id, proto_code) = {
+                    let mut rb = ReadBuf::new(exchange.rx()?.payload());
+                    let report = StatusReport::read(&mut rb)?;
+                    (report.proto_id, report.proto_code)
+                };
+                assert_eq!(proto_id, bdx::PROTO_ID_BDX as u32);
+                assert_eq!(
+                    proto_code,
+                    bdx::BdxStatus::TransferFailedUnknownError as u16
+                );
+                assert_eq!(server_phase.load(Ordering::Acquire), 2);
+                exchange.rx_done()?;
+                exchange.acknowledge().await?;
+
+                with_timeout(async {
+                    core::future::poll_fn(|cx| {
+                        if server_phase.load(Ordering::Acquire) == 3 {
+                            Poll::Ready(())
+                        } else {
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                    })
+                    .await;
+                    Ok::<_, Error>(())
+                })
+                .await?;
+
                 Ok::<_, Error>(())
             },
         )
