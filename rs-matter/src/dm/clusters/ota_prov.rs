@@ -264,6 +264,55 @@ where
 /// The valid `UpdateToken` length range, per the Matter spec.
 const UPDATE_TOKEN_LEN: core::ops::RangeInclusive<usize> = 8..=32;
 
+fn available_image_status(
+    protocols: impl Iterator<Item = Result<DownloadProtocolEnum, Error>>,
+) -> Result<StatusEnum, Error> {
+    let mut supports_bdx = false;
+    for protocol in protocols {
+        supports_bdx |= protocol? == DownloadProtocolEnum::BDXSynchronous;
+    }
+
+    Ok(if supports_bdx {
+        StatusEnum::UpdateAvailable
+    } else {
+        StatusEnum::DownloadProtocolNotSupported
+    })
+}
+
+fn status_only_query_response<P: TLVBuilderParent>(
+    response: QueryImageResponseBuilder<P>,
+    status: StatusEnum,
+) -> Result<P, Error> {
+    response
+        .status(status)?
+        .delayed_action_time(None)?
+        .image_uri(None)?
+        .software_version(None)?
+        .software_version_string(None)?
+        .update_token(None)?
+        .user_consent_needed(None)?
+        .metadata_for_requestor(None)?
+        .end()
+}
+
+fn image_offer_query_response<P: TLVBuilderParent>(
+    response: QueryImageResponseBuilder<P>,
+    image: &OtaImageMeta<'_>,
+    image_uri: &str,
+    software_version_string: &str,
+) -> Result<P, Error> {
+    response
+        .status(StatusEnum::UpdateAvailable)?
+        .delayed_action_time(None)?
+        .image_uri(Some(image_uri))?
+        .software_version(Some(image.version))?
+        .software_version_string(Some(software_version_string))?
+        .update_token(Some(Octets(image.update_token.as_slice())))?
+        .user_consent_needed(Some(image.user_consent_needed))?
+        .metadata_for_requestor(None)?
+        .end()
+}
+
 /// The server-side handler for the OTA Software Update Provider cluster.
 pub struct OtaProviderHandler<I> {
     dataver: Dataver,
@@ -334,18 +383,16 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
             }
             // No applicable image (already up to date).
             OtaQueryOutcome::NotAvailable => {
-                return response
-                    .status(StatusEnum::NotAvailable)?
-                    .delayed_action_time(None)?
-                    .image_uri(None)?
-                    .software_version(None)?
-                    .software_version_string(None)?
-                    .update_token(None)?
-                    .user_consent_needed(None)?
-                    .metadata_for_requestor(None)?
-                    .end();
+                return status_only_query_response(response, StatusEnum::NotAvailable);
             }
         };
+
+        // This provider serves images only over synchronous BDX. Do not advertise
+        // a BDX URI when the requestor did not list that protocol.
+        let status = available_image_status(request.protocols_supported()?.iter())?;
+        if status == StatusEnum::DownloadProtocolNotSupported {
+            return status_only_query_response(response, status);
+        }
 
         // The download URI points at this node (on the accessing fabric) and
         // carries the file designator as its path.
@@ -366,17 +413,8 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
             return Err(ErrorCode::ConstraintError.into());
         }
 
-        response
-            .status(StatusEnum::UpdateAvailable)?
-            .delayed_action_time(None)?
-            .image_uri(Some(uri.as_str()))?
-            .software_version(Some(image.version))?
-            .software_version_string(Some(version_str.as_str()))?
-            .update_token(Some(Octets(image.update_token.as_slice())))?
-            // Consent policy is the registry's; forward its decision verbatim.
-            .user_consent_needed(Some(image.user_consent_needed))?
-            .metadata_for_requestor(None)?
-            .end()
+        // Consent policy is the registry's; forward its decision verbatim.
+        image_offer_query_response(response, &image, uri.as_str(), version_str.as_str())
     }
 
     async fn handle_apply_update_request<P: TLVBuilderParent>(
@@ -553,7 +591,10 @@ where
 
 #[cfg(test)]
 mod registry_lifetime_tests {
-    use super::{OtaImageMeta, OtaImagesRegistry, OtaQueryOutcome};
+    use super::{
+        available_image_status, DownloadProtocolEnum, OtaImageMeta, OtaImagesRegistry,
+        OtaQueryOutcome, StatusEnum,
+    };
 
     struct BorrowedImage {
         designator: String,
@@ -599,5 +640,160 @@ mod registry_lifetime_tests {
         };
         assert_eq!(meta.file_designator, "runtime-image");
         assert_eq!(meta.update_token.as_slice(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn https_only_request_does_not_support_a_bdx_image_offer() {
+        let protocols = [DownloadProtocolEnum::HTTPS];
+
+        assert_eq!(
+            available_image_status(protocols.iter().copied().map(Ok)).unwrap(),
+            StatusEnum::DownloadProtocolNotSupported,
+        );
+    }
+
+    #[test]
+    fn bdx_synchronous_request_supports_a_bdx_image_offer() {
+        let protocols = [DownloadProtocolEnum::BDXSynchronous];
+
+        assert_eq!(
+            available_image_status(protocols.iter().copied().map(Ok)).unwrap(),
+            StatusEnum::UpdateAvailable,
+        );
+    }
+}
+
+#[cfg(test)]
+mod query_image_protocol_tests {
+    use crate::tlv::{TLVElement, TLVTag, TLVWriteParent};
+    use crate::utils::storage::WriteBuf;
+
+    use super::{
+        available_image_status, image_offer_query_response, status_only_query_response,
+        DownloadProtocolEnum, OtaImageMeta, QueryImageRequest, QueryImageRequestBuilder,
+        QueryImageResponse, QueryImageResponseBuilder, StatusEnum,
+    };
+
+    fn encode_query_image_request(protocols: &[DownloadProtocolEnum]) -> Vec<u8> {
+        let mut buf = [0; 128];
+        let mut writer = WriteBuf::new(&mut buf);
+
+        let mut protocols_builder = QueryImageRequestBuilder::new(
+            TLVWriteParent::new("test", &mut writer),
+            &TLVTag::Anonymous,
+        )
+        .unwrap()
+        .vendor_id(1)
+        .unwrap()
+        .product_id(2)
+        .unwrap()
+        .software_version(3)
+        .unwrap()
+        .protocols_supported()
+        .unwrap();
+        for protocol in protocols {
+            protocols_builder = protocols_builder.push(protocol).unwrap();
+        }
+        protocols_builder
+            .end()
+            .unwrap()
+            .hardware_version(None)
+            .unwrap()
+            .location(None)
+            .unwrap()
+            .requestor_can_consent(None)
+            .unwrap()
+            .metadata_for_provider(None)
+            .unwrap()
+            .end()
+            .unwrap();
+
+        writer.as_slice().to_vec()
+    }
+
+    fn encode_query_image_response(status: StatusEnum) -> Vec<u8> {
+        let mut buf = [0; 256];
+        let mut writer = WriteBuf::new(&mut buf);
+        let response = QueryImageResponseBuilder::new(
+            TLVWriteParent::new("test", &mut writer),
+            &TLVTag::Anonymous,
+        )
+        .unwrap();
+
+        if status == StatusEnum::DownloadProtocolNotSupported {
+            status_only_query_response(response, status).unwrap();
+        } else {
+            let image = OtaImageMeta {
+                version: 42,
+                file_designator: "update.bin",
+                update_token: heapless::Vec::from_slice(b"update-1").unwrap(),
+                size: Some(123),
+                user_consent_needed: false,
+            };
+            image_offer_query_response(response, &image, "bdx://0000000000000001/update.bin", "42")
+                .unwrap();
+        }
+
+        writer.as_slice().to_vec()
+    }
+
+    #[test]
+    fn query_image_protocols_produce_the_matching_wire_response() {
+        let cases = [
+            (
+                &[DownloadProtocolEnum::HTTPS][..],
+                StatusEnum::DownloadProtocolNotSupported,
+                false,
+            ),
+            (
+                &[DownloadProtocolEnum::BDXSynchronous][..],
+                StatusEnum::UpdateAvailable,
+                true,
+            ),
+            (
+                &[
+                    DownloadProtocolEnum::HTTPS,
+                    DownloadProtocolEnum::BDXSynchronous,
+                ][..],
+                StatusEnum::UpdateAvailable,
+                true,
+            ),
+            (
+                &[DownloadProtocolEnum::BDXAsynchronous][..],
+                StatusEnum::DownloadProtocolNotSupported,
+                false,
+            ),
+        ];
+
+        for (protocols, expected_status, offers_image) in cases {
+            let request_bytes = encode_query_image_request(protocols);
+            let request = QueryImageRequest::new(TLVElement::new(&request_bytes));
+            let status =
+                available_image_status(request.protocols_supported().unwrap().iter()).unwrap();
+            assert_eq!(status, expected_status, "protocols: {protocols:?}");
+
+            let response_bytes = encode_query_image_response(status);
+            let response = QueryImageResponse::new(TLVElement::new(&response_bytes));
+            assert_eq!(response.status().unwrap(), expected_status);
+            assert_eq!(response.delayed_action_time().unwrap(), None);
+
+            if offers_image {
+                assert_eq!(
+                    response.image_uri().unwrap().unwrap(),
+                    "bdx://0000000000000001/update.bin"
+                );
+                assert_eq!(response.software_version().unwrap(), Some(42));
+                assert_eq!(response.software_version_string().unwrap().unwrap(), "42");
+                assert_eq!(response.update_token().unwrap().unwrap().0, b"update-1");
+                assert_eq!(response.user_consent_needed().unwrap(), Some(false));
+            } else {
+                assert_eq!(response.image_uri().unwrap(), None);
+                assert_eq!(response.software_version().unwrap(), None);
+                assert_eq!(response.software_version_string().unwrap(), None);
+                assert_eq!(response.update_token().unwrap(), None);
+                assert_eq!(response.user_consent_needed().unwrap(), None);
+                assert_eq!(response.metadata_for_requestor().unwrap(), None);
+            }
+        }
     }
 }
