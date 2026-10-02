@@ -22,9 +22,6 @@ use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
 use domain::base::name::ToLabelIter;
-#[cfg(all(feature = "large-buffers", feature = "alloc"))]
-use pinned_init::InPlaceInit;
-
 #[cfg(feature = "groups")]
 use embassy_futures::select::select4;
 use embassy_futures::select::{select, select3, Either};

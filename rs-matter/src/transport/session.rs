@@ -2273,14 +2273,14 @@ mod tests {
 
     #[test]
     fn expiring_peer_sessions_preserves_other_peers_on_the_same_fabric() {
-        let mut sessions = Sessions::new(dummy_epoch);
+        let mut sessions = Sessions::new();
         let fabric_idx = NonZeroU8::new(1).unwrap();
         let first = sessions
-            .add(0, false, Address::default(), Some(41))
+            .add(0, false, Address::default(), Some(41), &TEST_DEV_DET)
             .unwrap()
             .id;
         let second = sessions
-            .add(0, false, Address::default(), Some(42))
+            .add(0, false, Address::default(), Some(42), &TEST_DEV_DET)
             .unwrap()
             .id;
         for session_id in [first, second] {
@@ -2293,8 +2293,8 @@ mod tests {
         assert_eq!(sessions.expire_sessions_for_peer(fabric_idx, 41), 1);
         assert!(sessions.get(first).unwrap().is_expired());
         assert!(!sessions.get(second).unwrap().is_expired());
-        assert!(sessions.get_for_node(1, 41, true).is_none());
-        assert_eq!(sessions.get_for_node(1, 42, true).unwrap().id, second);
+        assert!(sessions.get_for_node(fabric_idx, 41).is_none());
+        assert_eq!(sessions.get_for_node(fabric_idx, 42).unwrap().id, second);
         assert!(sessions.has_operational_case_session_for_peer(fabric_idx, 42));
         assert!(!sessions.has_operational_case_session_for_peer(fabric_idx, 41));
     }

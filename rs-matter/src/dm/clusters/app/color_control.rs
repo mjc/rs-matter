@@ -3637,25 +3637,25 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             let avp = avp?;
             let attr_id = avp.attribute_id()?;
 
-            if attr_id == AttributeId::EnhancedColorMode as _ {
+            if attr_id == AttributeId::EnhancedColorMode as u32 {
                 if let Some(v) = avp.value_unsigned_8()? {
                     mode = enhanced_color_mode_from_u8(v);
                 }
-            } else if attr_id == AttributeId::CurrentX as _ {
+            } else if attr_id == AttributeId::CurrentX as u32 {
                 current_x = avp.value_unsigned_16()?;
-            } else if attr_id == AttributeId::CurrentY as _ {
+            } else if attr_id == AttributeId::CurrentY as u32 {
                 current_y = avp.value_unsigned_16()?;
-            } else if attr_id == AttributeId::CurrentSaturation as _ {
+            } else if attr_id == AttributeId::CurrentSaturation as u32 {
                 current_saturation = avp.value_unsigned_8()?;
-            } else if attr_id == AttributeId::EnhancedCurrentHue as _ {
+            } else if attr_id == AttributeId::EnhancedCurrentHue as u32 {
                 enhanced_current_hue = avp.value_unsigned_16()?;
-            } else if attr_id == AttributeId::ColorTemperatureMireds as _ {
+            } else if attr_id == AttributeId::ColorTemperatureMireds as u32 {
                 color_temperature_mireds = avp.value_unsigned_16()?;
-            } else if attr_id == AttributeId::ColorLoopActive as _ {
+            } else if attr_id == AttributeId::ColorLoopActive as u32 {
                 color_loop_active = avp.value_unsigned_8()?;
-            } else if attr_id == AttributeId::ColorLoopDirection as _ {
+            } else if attr_id == AttributeId::ColorLoopDirection as u32 {
                 color_loop_direction = avp.value_unsigned_8()?;
-            } else if attr_id == AttributeId::ColorLoopTime as _ {
+            } else if attr_id == AttributeId::ColorLoopTime as u32 {
                 color_loop_time = avp.value_unsigned_16()?;
             }
         }

@@ -330,7 +330,7 @@ impl core::error::Error for Error {
 }
 
 #[cfg(test)]
-mod tests {
+mod im_status_tests {
     use super::{Error, ErrorCode};
     use crate::im::IMStatusCode;
 

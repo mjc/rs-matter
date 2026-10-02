@@ -57,7 +57,7 @@ pub mod wifi_diag;
 
 /// Matter 1.4.2 WebRTC signaling clusters used by the Matter Server.
 pub mod webrtc {
-    crate::import!(WebRTCTransportProvider, WebRTCTransportRequestor);
+    pub use super::decl::{web_rtc_transport_provider, web_rtc_transport_requestor};
 }
 
 #[cfg(test)]

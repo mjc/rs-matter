@@ -54,11 +54,11 @@ impl<C: Crypto> CasePeerVerifier<C> for AcceptExpectedPeer {
 
 struct CaseIdentityHandler<'a, C> {
     crypto: &'a C,
-    peers: std::sync::mpsc::Sender<CasePeerIdentity>,
+    peers: async_channel::Sender<CasePeerIdentity>,
 }
 
 impl<C: Crypto> ExchangeHandler for CaseIdentityHandler<'_, C> {
-    fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+    fn handle(&self, mut exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         async move {
             exchange.recv_fetch().await?;
             if exchange.rx()?.meta().opcode::<OpCode>()? == OpCode::CASESigma1 {
@@ -66,7 +66,7 @@ impl<C: Crypto> ExchangeHandler for CaseIdentityHandler<'_, C> {
                     .handle_with_identity(exchange)
                     .await?
                 {
-                    let _ = self.peers.send(peer);
+                    let _ = self.peers.send(peer).await;
                 }
             }
             Ok(())
@@ -158,7 +158,7 @@ fn case_initiator_authenticates_peer_and_owns_session() {
         let (device_socket, controller_socket) = create_localhost_socket_pair();
         let peer_addr = Address::Udp(device_socket.get_ref().local_addr().unwrap());
         let case_peer_addr = Address::Udp(controller_socket.get_ref().local_addr().unwrap());
-        let (case_peer_tx, case_peer_rx) = std::sync::mpsc::channel();
+        let (case_peer_tx, case_peer_rx) = async_channel::bounded(1);
         let responder = Responder::new(
             "case-identity",
             CaseIdentityHandler {
@@ -197,9 +197,7 @@ fn case_initiator_authenticates_peer_and_owns_session() {
                 drop(handle);
                 assert!(!controller_matter
                     .has_operational_case_session_for_peer(fab_idx, DEVICE_NODE_ID));
-                let case_peer = case_peer_rx
-                    .try_recv()
-                    .expect("CASE responder returns the authenticated peer identity");
+                let case_peer = case_peer_rx.recv().await.unwrap();
                 assert_eq!(case_peer.fabric_index, fab_idx);
                 assert_eq!(case_peer.node_id, CONTROLLER_NODE_ID);
                 assert_eq!(case_peer.address, case_peer_addr);

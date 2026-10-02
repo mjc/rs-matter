@@ -1809,6 +1809,7 @@ mod tests {
                 None,
                 None,
                 Some(AttChallengeRef::new(challenge)),
+                None,
             )
             .unwrap();
         reserved.complete();
@@ -1819,8 +1820,8 @@ mod tests {
     #[test]
     fn authenticated_peer_identity_requires_case_and_live_session() {
         use crate::transport::session::ReservedSession;
-        let matter = test_matter(monotonic_test_epoch);
-        let plain = block_on(Exchange::initiate_unsecured(
+        let matter = test_matter();
+        let plain = block_on(Exchange::initiate_plaintext(
             &matter,
             test_only_crypto(),
             network::Address::new(),
@@ -1835,7 +1836,7 @@ mod tests {
             ErrorCode::InvalidState
         );
         let pase_id = add_pase_session(&matter, &[0; 16]);
-        let pase = Exchange::initiate_for_session(&matter, pase_id).unwrap();
+        let pase = Exchange::initiate_for_session(&matter, test_only_crypto(), pase_id).unwrap();
         assert_eq!(
             pase.authenticated_peer_identity().unwrap_err().code(),
             ErrorCode::InvalidState
@@ -1878,10 +1879,11 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
         reserved.complete();
-        let case = Exchange::initiate_for_session(&matter, session_id).unwrap();
+        let case = Exchange::initiate_for_session(&matter, test_only_crypto(), session_id).unwrap();
         assert_eq!(case.authenticated_peer_identity().unwrap(), (3, 42));
         assert_eq!(case.authenticated_peer_addr().unwrap(), peer_addr);
         matter.with_state(|state| state.sessions.remove(session_id).unwrap());
@@ -1897,23 +1899,26 @@ mod tests {
 
     #[test]
     fn attestation_challenge_returns_session_challenge() {
-        let matter = test_matter(monotonic_test_epoch);
+        let matter = test_matter();
         let challenge = [0x5a; 16];
         let session_id = add_pase_session(&matter, &challenge);
-        let exchange = Exchange::initiate_for_session(&matter, session_id).unwrap();
+        let exchange =
+            Exchange::initiate_for_session(&matter, test_only_crypto(), session_id).unwrap();
 
         assert_eq!(exchange.attestation_challenge().unwrap(), challenge);
     }
 
     #[test]
     fn attestation_challenge_uses_the_exchange_session() {
-        let matter = test_matter(monotonic_test_epoch);
+        let matter = test_matter();
         let first_challenge = [0x11; 16];
         let second_challenge = [0x22; 16];
         let first_session_id = add_pase_session(&matter, &first_challenge);
         let second_session_id = add_pase_session(&matter, &second_challenge);
-        let first_exchange = Exchange::initiate_for_session(&matter, first_session_id).unwrap();
-        let second_exchange = Exchange::initiate_for_session(&matter, second_session_id).unwrap();
+        let first_exchange =
+            Exchange::initiate_for_session(&matter, test_only_crypto(), first_session_id).unwrap();
+        let second_exchange =
+            Exchange::initiate_for_session(&matter, test_only_crypto(), second_session_id).unwrap();
 
         assert_eq!(
             first_exchange.attestation_challenge().unwrap(),
@@ -1927,8 +1932,8 @@ mod tests {
 
     #[test]
     fn attestation_challenge_rejects_plaintext_sessions() {
-        let matter = test_matter(monotonic_test_epoch);
-        let exchange = block_on(Exchange::initiate_unsecured(
+        let matter = test_matter();
+        let exchange = block_on(Exchange::initiate_plaintext(
             &matter,
             test_only_crypto(),
             network::Address::new(),
@@ -1943,10 +1948,11 @@ mod tests {
 
     #[test]
     fn attestation_challenge_rejects_removed_sessions() {
-        let matter = test_matter(monotonic_test_epoch);
+        let matter = test_matter();
         let challenge = [0x33; 16];
         let session_id = add_pase_session(&matter, &challenge);
-        let exchange = Exchange::initiate_for_session(&matter, session_id).unwrap();
+        let exchange =
+            Exchange::initiate_for_session(&matter, test_only_crypto(), session_id).unwrap();
 
         matter.with_state(|state| state.sessions.remove(session_id).unwrap());
 
