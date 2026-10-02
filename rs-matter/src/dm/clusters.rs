@@ -55,6 +55,26 @@ pub mod unit_testing;
 pub mod user_label;
 pub mod wifi_diag;
 
+/// Matter 1.4.2 WebRTC signaling clusters used by the Matter Server.
+pub mod webrtc {
+    crate::import!(WebRTCTransportProvider, WebRTCTransportRequestor);
+}
+
+#[cfg(test)]
+mod webrtc_tests {
+    #[test]
+    fn generated_webrtc_clusters_match_the_matter_cluster_ids() {
+        assert_eq!(
+            super::webrtc::web_rtc_transport_provider::FULL_CLUSTER.id,
+            1363
+        );
+        assert_eq!(
+            super::webrtc::web_rtc_transport_requestor::FULL_CLUSTER.id,
+            1364
+        );
+    }
+}
+
 /// Generated cluster declarations from Matter IDL (via build.rs).
 #[allow(
     clippy::all,
