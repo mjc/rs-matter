@@ -1218,6 +1218,16 @@ impl Transport {
         Self::get_if(&self.rx, f).await
     }
 
+    pub(crate) fn try_get_if_rx<F>(&self, f: F) -> Option<PacketAccess<'_, MAX_RX_BUF_SIZE>>
+    where
+        F: FnMut(&Packet<MAX_RX_BUF_SIZE>) -> bool,
+    {
+        self.rx
+            .try_lock_if(f)
+            .ok()
+            .map(|packet| PacketAccess(packet, false))
+    }
+
     pub(crate) async fn get_if_tx<F>(&self, f: F) -> PacketAccess<'_, MAX_TX_BUF_SIZE>
     where
         F: Fn(&Packet<MAX_TX_BUF_SIZE>) -> bool,
@@ -3013,6 +3023,25 @@ mod tests {
 
     fn test_matter() -> Matter<'static> {
         Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0)
+    }
+
+    #[test]
+    fn try_get_if_rx_does_not_wait_for_or_claim_unmatched_packet() {
+        let matter = test_matter();
+        let transport = matter.transport();
+        let mut packet = transport.rx.try_lock().unwrap();
+        packet.buf.push(0xA5).unwrap();
+        drop(packet);
+
+        assert!(transport.try_get_if_rx(|_| false).is_none());
+        assert_eq!(
+            transport
+                .try_get_if_rx(|packet| !packet.buf.is_empty())
+                .unwrap()
+                .buf
+                .as_slice(),
+            &[0xA5]
+        );
     }
 
     #[cfg(all(feature = "large-buffers", feature = "alloc", feature = "std"))]

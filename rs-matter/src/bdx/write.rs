@@ -84,6 +84,11 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         // subsequent writer calls must not emit any more BDX blocks.
         self.cancelled = true;
 
+        // A previous Block may still be awaiting its MRP acknowledgement after
+        // the caller dropped `commit`. Drain that send before starting the
+        // StatusReport transaction, which cannot share the exchange's MRP slot.
+        self.exchange.wait_for_retransmission_ack().await?;
+
         super::nego::send_abort_report(&mut self.exchange, BdxStatus::TransferFailedUnknownError)
             .await?;
         Ok(())

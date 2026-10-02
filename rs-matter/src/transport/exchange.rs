@@ -43,7 +43,7 @@ use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
 use super::session::{Session, SessionMode};
-use super::{PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
+use super::{Packet, PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
 ///
@@ -124,24 +124,9 @@ impl ExchangeId {
         self.check_no_pending_retrans(matter)?;
 
         loop {
-            let mut recv = pin!(matter.transport().get_if_rx(|packet| {
-                if packet.buf.is_empty() {
-                    false
-                } else {
-                    let for_us = self.with_state(matter, |state| {
-                        let sess = self.session(&mut state.sessions);
-                        if sess.is_for_rx(&packet.peer, &packet.header.plain) {
-                            let exch = self.exch(sess);
-
-                            return Ok(exch.is_for_rx(&packet.header.proto));
-                        }
-
-                        Ok(false)
-                    });
-
-                    for_us.unwrap_or(true)
-                }
-            }));
+            let mut recv = pin!(matter
+                .transport()
+                .get_if_rx(|packet| self.is_for_rx_packet(matter, packet)));
 
             let mut session_removed = pin!(matter.transport().wait_session_removed());
 
@@ -179,6 +164,23 @@ impl ExchangeId {
                 }
             };
         }
+    }
+
+    fn is_for_rx_packet<'a>(
+        &self,
+        matter: &'a Matter<'a>,
+        packet: &Packet<MAX_RX_BUF_SIZE>,
+    ) -> bool {
+        if packet.buf.is_empty() {
+            return false;
+        }
+
+        self.with_state(matter, |state| {
+            let sess = self.session(&mut state.sessions);
+            Ok(sess.is_for_rx(&packet.peer, &packet.header.plain)
+                && self.exch(sess).is_for_rx(&packet.header.proto))
+        })
+        .unwrap_or(true)
     }
 
     /// Gets access to the TX buffer of the Matter stack for constructing a new TX message.
@@ -291,17 +293,23 @@ impl ExchangeId {
         })
     }
 
-    async fn internal_wait_ack<'a>(&self, matter: &'a Matter<'a>) -> Result<(), Error> {
-        matter
+    async fn internal_wait_ack<'a>(
+        &self,
+        matter: &'a Matter<'a>,
+    ) -> Result<PacketAccess<'a, MAX_RX_BUF_SIZE>, Error> {
+        let rx = matter
             .transport
-            .get_if_rx(|_| {
+            .get_if_rx(|packet| {
                 self.retrans_delay_ms(matter)
-                    .map(|retrans| retrans.is_none())
+                    .map(|retrans| {
+                        retrans.is_none()
+                            && (packet.buf.is_empty() || self.is_for_rx_packet(matter, packet))
+                    })
                     .unwrap_or(true)
             })
             .await;
 
-        self.with_state(matter, |_| Ok(()))
+        self.with_state(matter, |_| Ok(rx))
     }
 
     fn retrans_delay_ms<'a>(&self, matter: &'a Matter<'a>) -> Result<Option<u64>, Error> {
@@ -1542,6 +1550,51 @@ impl<'a> Exchange<'a> {
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     pub fn pending_retrans(&self) -> Result<bool, Error> {
         self.id.pending_retrans(self.matter)
+    }
+
+    /// Wait until the last reliable message on this exchange is acknowledged.
+    ///
+    /// Unlike [`wait_tx`](Self::wait_tx), this waits for acknowledgement instead
+    /// of returning when the retransmission interval expires. Any received
+    /// packet that clears the retransmission remains queued for [`recv_fetch`](Self::recv_fetch).
+    /// If the session is removed while waiting, this returns `NoSession`.
+    pub(crate) async fn wait_for_retransmission_ack(&mut self) -> Result<(), Error> {
+        self.rx = None;
+
+        if !self.pending_retrans()? {
+            if let Some(mut packet) = self
+                .matter
+                .transport()
+                .try_get_if_rx(|packet| self.id.is_for_rx_packet(self.matter, packet))
+            {
+                packet.clear_on_drop(true);
+                self.rx = Some(RxMessage(packet));
+            }
+            return Ok(());
+        }
+
+        loop {
+            let mut packet = {
+                let mut wait_ack = pin!(self.id.internal_wait_ack(self.matter));
+                let mut session_removed = pin!(self.matter.transport().wait_session_removed());
+
+                match select(&mut wait_ack, &mut session_removed).await {
+                    Either::First(result) => result?,
+                    Either::Second(_) => {
+                        self.id.with_state(self.matter, |_| Ok(()))?;
+                        continue;
+                    }
+                }
+            };
+
+            if !self.pending_retrans()? {
+                if !packet.buf.is_empty() {
+                    packet.clear_on_drop(true);
+                    self.rx = Some(RxMessage(packet));
+                }
+                return Ok(());
+            }
+        }
     }
 
     /// Returns `true` if there is a pending message acknowledgement.

@@ -711,6 +711,73 @@ impl ExchangeHandler for CancelDownloadAfterFirstBlockHandler<'_> {
     }
 }
 
+/// Keep the first receiver-driven block unacknowledged until the peer requests
+/// counter 1. Cancellation must drain that outstanding reliable send before it
+/// can send the BDX failure report.
+struct CancelDownloadWithUnackedBlockHandler<'a>(&'a AtomicUsize);
+
+impl ExchangeHandler for CancelDownloadWithUnackedBlockHandler<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0u8; 1024];
+        let mut writer = responder.reply(&mut buf, Some(2048)).await?;
+        writer.block_buf()[..1024].fill(0xA5);
+
+        let commit_outcome = {
+            let mut commit = core::pin::pin!(writer.commit(1024));
+            let commit_pending = core::future::poll_fn(|cx| match commit.as_mut().poll(cx) {
+                Poll::Pending => Poll::Ready(true),
+                Poll::Ready(_) => Poll::Ready(false),
+            })
+            .await;
+            assert!(
+                commit_pending,
+                "commit must wait for the peer's first BlockQuery"
+            );
+
+            select(
+                commit.as_mut(),
+                core::future::poll_fn(|cx| {
+                    if self.0.load(Ordering::Acquire) == 1 {
+                        Poll::Ready(())
+                    } else {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                }),
+            )
+            .await
+        };
+        assert!(
+            matches!(commit_outcome, Either::Second(())),
+            "the peer must observe block 0 before the commit future is dropped"
+        );
+        self.0.store(2, Ordering::Release);
+        let mut cancel = core::pin::pin!(writer.cancel());
+        let immediate = core::future::poll_fn(|cx| match cancel.as_mut().poll(cx) {
+            Poll::Pending => Poll::Ready(None),
+            Poll::Ready(result) => Poll::Ready(Some(result)),
+        })
+        .await;
+
+        match immediate {
+            Some(Ok(())) => {
+                self.0.store(3, Ordering::Release);
+                Ok(())
+            }
+            Some(Err(error)) => {
+                self.0.store(4, Ordering::Release);
+                Err(error)
+            }
+            None => {
+                cancel.await?;
+                self.0.store(3, Ordering::Release);
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Accept a receiver-driven download, send one block, then finish the handler.
 /// This lets the client simulate a transport/session failure before cancellation.
 struct EndAfterFirstBlockHandler;
@@ -979,6 +1046,7 @@ fn test_bdx_download_writer_cancel_after_second_commit_pending() {
                 let block = bdx::Block::parse(exchange.rx()?.payload())?;
                 assert_eq!(block.block_counter, 0);
                 assert_eq!(block.data, &[0xA5; 1024]);
+                server_phase.store(1, Ordering::Release);
                 exchange.rx_done()?;
                 exchange.acknowledge().await?;
 
@@ -1010,6 +1078,126 @@ fn test_bdx_download_writer_cancel_after_second_commit_pending() {
                         }
                     })
                     .await;
+                    Ok::<_, Error>(())
+                })
+                .await?;
+
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// A delivered block remains unacknowledged while cancellation begins. The
+/// peer's next BlockQuery releases the outstanding MRP send, after which the
+/// writer must report failure instead of sending block 1.
+#[test]
+fn test_bdx_download_cancel_drains_unacked_block_before_status() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let server_phase = AtomicUsize::new(0);
+
+    futures_lite::future::block_on(async {
+        select(
+            runner.run_responder(CancelDownloadWithUnackedBlockHandler(&server_phase)),
+            async {
+                let mut exchange = runner.initiate_exchange().await?;
+                exchange
+                    .send_with(|_, wb| {
+                        bdx::TransferInit {
+                            transfer_control: bdx::TransferControl {
+                                version: bdx::BDX_VERSION,
+                                sender_drive: true,
+                                receiver_drive: true,
+                                async_mode: false,
+                            },
+                            range_control: bdx::RangeControl::default(),
+                            max_block_size: 1024,
+                            start_offset: 0,
+                            length: 0,
+                            file_designator: FILE_DESIGNATOR,
+                            metadata: &[],
+                        }
+                        .write(wb)?;
+                        Ok(Some(bdx::OpCode::ReceiveInit.into()))
+                    })
+                    .await?;
+
+                exchange.recv_fetch().await?;
+                let accept = bdx::TransferAccept::parse(true, exchange.rx()?.payload())?;
+                assert!(accept.transfer_control.receiver_drive);
+                assert!(!accept.transfer_control.sender_drive);
+                exchange.rx_done()?;
+
+                exchange
+                    .send_with(|_, wb| {
+                        bdx::BlockQuery { block_counter: 0 }.write(wb)?;
+                        Ok(Some(bdx::OpCode::BlockQuery.into()))
+                    })
+                    .await?;
+
+                exchange.recv_fetch().await?;
+                assert_eq!(exchange.rx()?.meta().proto_opcode, bdx::OpCode::Block as u8);
+                let block = bdx::Block::parse(exchange.rx()?.payload())?;
+                assert_eq!(block.block_counter, 0);
+                assert_eq!(block.data, &[0xA5; 1024]);
+                server_phase.store(1, Ordering::Release);
+
+                core::future::poll_fn(|cx| {
+                    if server_phase.load(Ordering::Acquire) >= 2 {
+                        Poll::Ready(())
+                    } else {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                })
+                .await;
+                if server_phase.load(Ordering::Acquire) == 4 {
+                    return Err(rs_matter::error::ErrorCode::InvalidState.into());
+                }
+
+                // `send_with` releases the held block and carries its MRP ACK,
+                // while the BDX counter requests a block the cancelled writer
+                // must never send.
+                exchange.rx_done()?;
+                exchange
+                    .send_with(|_, wb| {
+                        bdx::BlockQuery { block_counter: 1 }.write(wb)?;
+                        Ok(Some(bdx::OpCode::BlockQuery.into()))
+                    })
+                    .await?;
+
+                exchange.recv_fetch().await?;
+                let meta = exchange.rx()?.meta();
+                assert_eq!(meta.proto_id, rs_matter::sc::PROTO_ID_SECURE_CHANNEL);
+                assert_eq!(meta.proto_opcode, ScOpCode::StatusReport as u8);
+                let mut rb = ReadBuf::new(exchange.rx()?.payload());
+                let report = StatusReport::read(&mut rb)?;
+                assert_eq!(report.proto_id, bdx::PROTO_ID_BDX as u32);
+                assert_eq!(
+                    report.proto_code,
+                    bdx::BdxStatus::TransferFailedUnknownError as u16
+                );
+                assert_eq!(server_phase.load(Ordering::Acquire), 2);
+                exchange.rx_done()?;
+                exchange.acknowledge().await?;
+
+                with_timeout(async {
+                    core::future::poll_fn(|cx| {
+                        let phase = server_phase.load(Ordering::Acquire);
+                        if phase == 3 || phase == 4 {
+                            Poll::Ready(())
+                        } else {
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                    })
+                    .await;
+                    assert_eq!(server_phase.load(Ordering::Acquire), 3);
                     Ok::<_, Error>(())
                 })
                 .await?;
