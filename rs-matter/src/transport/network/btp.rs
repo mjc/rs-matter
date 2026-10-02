@@ -584,6 +584,73 @@ mod test {
     }
 
     #[test]
+    fn controller_role_sends_handshake_with_a_nonzero_receive_window() {
+        let btp = Btp::new();
+        btp.set_initiator(true);
+
+        let mut buf = [0; 32];
+        let len = btp.process_outgoing(Some(0xc8), &mut buf).unwrap();
+
+        assert_eq!(&buf[..2], &[0x65, 0x6c]);
+        assert_eq!(len, 9);
+        assert_eq!(&buf[2..8], &[0x04, 0x00, 0x00, 0x00, 0xc8, 0x00]);
+        assert_eq!(buf[8], 8, "controller advertised the wrong receive window");
+    }
+
+    #[test]
+    fn controller_role_accepts_handshake_response_and_uses_negotiated_window() {
+        let btp = Btp::new();
+        btp.set_initiator(true);
+
+        let mut tx_buf = [0; 32];
+        assert_eq!(btp.process_outgoing(Some(0xc8), &mut tx_buf).unwrap(), 9);
+
+        incoming(&btp, &[0x65, 0x6c, 0x04, 0xc5, 0x00, 0x02]);
+
+        send(&btp, &[0xaa]);
+        expect_outgoing(&btp, &[0x0d, 0x00, 0x00, 0x01, 0x00, 0xaa]);
+        incoming(&btp, &[0x05, 0x01, 0x01, 0x00, 0xbb]);
+        expect_recv(&btp, &[0xbb]);
+    }
+
+    #[test]
+    fn controller_role_rejects_malformed_handshake_responses() {
+        for response in [
+            &[0x65, 0x6c, 0x04, 0xc5][..],
+            &[0x65, 0x6d, 0x04, 0xc5, 0x00, 0x02][..],
+            &[0x65, 0x6c, 0x04, 0xc5, 0x00, 0x02, 0x00][..],
+            &[0x65, 0x6c, 0x03, 0xc5, 0x00, 0x02][..],
+            &[0x65, 0x6c, 0x04, 0x00, 0x00, 0x02][..],
+            &[0x65, 0x6c, 0x04, 0xff, 0x00, 0x02][..],
+            &[0x65, 0x6c, 0x04, 0xc5, 0x00, 0x00][..],
+            &[0x65, 0x6c, 0x04, 0xc5, 0x00, 0x09][..],
+        ] {
+            let btp = Btp::new();
+            btp.set_initiator(true);
+
+            let mut tx_buf = [0; 32];
+            assert_eq!(btp.process_outgoing(Some(0xc8), &mut tx_buf).unwrap(), 9);
+
+            assert!(btp
+                .process_incoming(Some(0xc8), PEER_ADDR, response)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn controller_handshake_times_out_without_a_response() {
+        let btp = Btp::new();
+        btp.set_timeouts(1, 1);
+        btp.set_initiator(true);
+
+        let mut buf = [0; 32];
+        assert_eq!(btp.process_outgoing(Some(0xc8), &mut buf).unwrap(), 9);
+        embassy_futures::block_on(Timer::after_secs(2));
+
+        assert!(btp.timeout(), "unanswered handshake did not time out");
+    }
+
+    #[test]
     fn test_mtu_timeout() {
         #[cfg(all(feature = "std", not(target_os = "espidf")))]
         {

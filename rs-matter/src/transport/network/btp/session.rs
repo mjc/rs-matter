@@ -660,11 +660,35 @@ impl Session {
         // Check received packet integrity, as per the Matter Core spec
         RecvWindow::check_handshake_integrity(&hdr)?;
 
+        if payload.len() != 4 {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
         let resp = HandshakeResp::from(payload.iter().copied())?;
+
+        let max_payload_mtu = MAX_MTU - GATT_HEADER_SIZE as u16;
+        let min_payload_mtu = MIN_MTU - GATT_HEADER_SIZE as u16;
+        if resp.version != 4
+            || !(min_payload_mtu..=max_payload_mtu).contains(&resp.mtu)
+            || resp.mtu > self.mtu
+            || resp.window_size == 0
+            || resp.window_size > self.window_size
+        {
+            warn!(
+                "RX handshake response contains invalid negotiated parameters: {:?}",
+                resp
+            );
+            return Err(ErrorCode::InvalidData.into());
+        }
 
         debug!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE RESP {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, resp, resp.version, resp.mtu, resp.window_size);
 
         self.setup(address, resp.version, resp.mtu, resp.window_size);
+        self.send_window.sent_at = Instant::MAX;
+        self.recv_window.level -= 1;
+        self.recv_window.ack_level = 1;
+        self.recv_window.ack_seq = 0;
+        self.recv_window.received_at = Instant::now();
 
         Ok(())
     }
@@ -695,15 +719,15 @@ impl Session {
         gatt_mtu: Option<u16>,
         buf: &mut [u8],
     ) -> Result<usize, Error> {
+        let gatt_mtu = gatt_mtu.unwrap_or(MIN_MTU);
         let mtu = gatt_mtu
-            .map(|g| g.clamp(MIN_MTU, MAX_MTU))
-            .unwrap_or(MIN_MTU);
-        let window_size = Self::initial_window_size(mtu - GATT_HEADER_SIZE as u16);
+            .saturating_sub(GATT_HEADER_SIZE as u16)
+            .max(MIN_MTU - GATT_HEADER_SIZE as u16);
 
         let req = HandshakeReq {
             versions: 4,
-            mtu,
-            window_size,
+            mtu: gatt_mtu,
+            window_size: Self::initial_window_size(mtu),
         };
 
         let mut wb = WriteBuf::new(buf);
@@ -720,13 +744,12 @@ impl Session {
         hdr.encode(&mut wb)?;
         req.encode(&mut wb)?;
 
-        // NOTE: unlike the Handshake *Response* (and unlike regular data), we do
-        // NOT `post_send()` here. As the initiator, the send window does not exist
-        // yet at request time - it is established from the peer's Handshake
-        // Response in `process_rx_handshake_resp` -> `setup()`. A `post_send()` on
-        // the still-zero window would underflow `level` (0 - 1). The handshake
-        // request is a pre-window control frame; flow control begins only once the
-        // window is negotiated.
+        self.window_size = req.window_size;
+        self.mtu = mtu;
+        self.recv_window.level = req.window_size;
+        self.send_window.window_size = req.window_size;
+        self.send_window.level = req.window_size;
+        self.send_window.sent_at = Instant::now();
 
         Ok(wb.get_tail())
     }
