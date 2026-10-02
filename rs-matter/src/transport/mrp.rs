@@ -111,12 +111,19 @@ pub struct RetransEntry {
     base_delay_interval_ms: u32,
     // The msg counter that we are waiting to be acknowledged
     msg_ctr: u32,
+    // ACK counter encoded in the original reliable message. Retransmissions
+    // must retain it byte-for-byte even if a newer RX message arrives.
+    ack_msg_ctr: Option<u32>,
     // The retransmission counter
     counter: u16,
 }
 
 impl RetransEntry {
-    pub fn new(base_delay_interval_ms: Option<u32>, msg_ctr: u32) -> Self {
+    pub fn new(
+        base_delay_interval_ms: Option<u32>,
+        msg_ctr: u32,
+        ack_msg_ctr: Option<u32>,
+    ) -> Self {
         // Defence-in-depth: a future code path that bypasses the
         // peer-side / dev_det-side zero filters must never collapse the
         // backoff into a zero-delay retransmit loop. Treat `Some(0)`
@@ -127,6 +134,7 @@ impl RetransEntry {
         Self {
             base_delay_interval_ms,
             msg_ctr,
+            ack_msg_ctr,
             counter: 0,
         }
     }
@@ -266,15 +274,9 @@ impl ReliableMessage {
         // once we detect idle vs active devices
         _session_idle_interval_ms: Option<u32>,
     ) -> Result<(), Error> {
-        // Check if any acknowledgements are pending for this exchange,
-        if let Some(ack) = &mut self.ack {
-            // if so, piggy back in the encoded header here
-            tx_proto.set_ack(Some(ack.get_msg_ctr()));
-            ack.acknowledged = true;
-        }
-
         if tx_proto.is_reliable() {
             if let Some(retrans) = &mut self.retrans {
+                tx_proto.set_ack(retrans.ack_msg_ctr);
                 if retrans.pre_send(tx_plain.ctr).is_err() {
                     // Too many retransmissions, give up
                     error!(
@@ -291,8 +293,25 @@ impl ReliableMessage {
                     Err(ErrorCode::TxTimeout)?;
                 }
             } else {
-                self.retrans = Some(RetransEntry::new(session_active_interval_ms, tx_plain.ctr));
+                if let Some(ack) = &mut self.ack {
+                    tx_proto.set_ack(Some(ack.get_msg_ctr()));
+                    ack.acknowledged = true;
+                } else {
+                    tx_proto.set_ack(None);
+                }
+                self.retrans = Some(RetransEntry::new(
+                    session_active_interval_ms,
+                    tx_plain.ctr,
+                    tx_proto.get_ack(),
+                ));
             }
+        } else if let Some(ack) = &mut self.ack {
+            // An unreliable message may carry a current ACK, but never borrows
+            // the counter or ACK snapshot from the reliable retransmission.
+            tx_proto.set_ack(Some(ack.get_msg_ctr()));
+            ack.acknowledged = true;
+        } else {
+            tx_proto.set_ack(None);
         }
 
         self.received_at = None;
@@ -333,12 +352,14 @@ impl ReliableMessage {
 
         if rx_proto.is_reliable() {
             if let Some(ack) = &self.ack {
-                // This indicates there was some existing entry for same sess-id/exch-id, which shouldnt happen
-                // TODO: As per the spec if this happens, we need to send out the previous ACK and note this new ACK
-                error!(
-                    "Previous ACK entry {:x} for this exchange already exists",
-                    ack.get_msg_ctr()
-                );
+                if !ack.acknowledged {
+                    // This indicates there was some existing entry for same sess-id/exch-id, which shouldnt happen
+                    // TODO: As per the spec if this happens, we need to send out the previous ACK and note this new ACK
+                    error!(
+                        "Previous ACK entry {:x} for this exchange already exists",
+                        ack.get_msg_ctr()
+                    );
+                }
             }
 
             self.ack = Some(AckEntry::new(rx_plain.ctr)?);
@@ -365,7 +386,7 @@ mod tests {
     fn retrans_entry_gives_up_after_max_transmissions() {
         const CTR: u32 = 42;
 
-        let mut entry = RetransEntry::new(Some(300), CTR);
+        let mut entry = RetransEntry::new(Some(300), CTR, None);
 
         for attempt in 0..MRP_MAX_TRANSMISSIONS {
             assert!(
@@ -593,6 +614,29 @@ mod tests {
         assert_eq!(unwrap!(mrp.ack.as_ref()).get_msg_ctr(), 7);
     }
 
+    /// A retransmission retains its original piggyback ACK while a standalone
+    /// ACK can carry a newer receive counter without altering that snapshot.
+    #[test]
+    fn retransmission_preserves_piggyback_ack_snapshot() {
+        let mut mrp = ReliableMessage::new();
+        unwrap!(mrp.post_recv(&plain(6), &proto(true)));
+
+        let mut report = proto(true);
+        unwrap!(mrp.pre_send(&plain(20), &mut report, Some(300), None));
+        assert_eq!(report.get_ack(), Some(6));
+
+        unwrap!(mrp.post_recv(&plain(7), &proto(true)));
+        let mut retry = proto(true);
+        unwrap!(mrp.pre_send(&plain(20), &mut retry, Some(300), None));
+        assert_eq!(retry.get_ack(), Some(6));
+        assert!(mrp.is_ack_pending());
+
+        let mut standalone_ack = proto(false);
+        unwrap!(mrp.pre_send(&plain(21), &mut standalone_ack, Some(300), None));
+        assert_eq!(standalone_ack.get_ack(), Some(7));
+        assert_eq!(unwrap!(mrp.retrans.as_ref()).get_msg_ctr(), 20);
+    }
+
     /// The receive timeout is measured from the last receive: nothing received
     /// means no timeout, a zero timeout expires at once, and a send clears the
     /// stamp again.
@@ -619,7 +663,7 @@ mod tests {
     /// (`jitter_rand == 255`) of the base delay, and grows with the random.
     #[test]
     fn delay_ms_jitter_stays_within_band() {
-        let entry = RetransEntry::new(Some(300), 1);
+        let entry = RetransEntry::new(Some(300), 1, None);
 
         let no_jitter = entry.delay_ms(0);
         let max_jitter = entry.delay_ms(255);
@@ -639,14 +683,14 @@ mod tests {
     /// zero interval can never collapse the ladder into a tight loop.
     #[test]
     fn retrans_entry_zero_interval_falls_back_to_default() {
-        let default = RetransEntry::new(None, 1).delay_ms(0);
+        let default = RetransEntry::new(None, 1, None).delay_ms(0);
 
-        assert_eq!(RetransEntry::new(Some(0), 1).delay_ms(0), default);
+        assert_eq!(RetransEntry::new(Some(0), 1, None).delay_ms(0), default);
         assert_eq!(
-            RetransEntry::new(Some(MRP_BASE_RETRY_INTERVAL_MS), 1).delay_ms(0),
+            RetransEntry::new(Some(MRP_BASE_RETRY_INTERVAL_MS), 1, None).delay_ms(0),
             default
         );
-        assert!(RetransEntry::new(Some(1000), 1).delay_ms(0) > default);
+        assert!(RetransEntry::new(Some(1000), 1, None).delay_ms(0) > default);
     }
 
     /// The peer-MRP defaults for a fresh session come from our own SAI / SII,

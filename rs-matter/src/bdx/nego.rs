@@ -94,6 +94,21 @@ pub(super) async fn send_abort_report(
     send_status_report(exchange, status).await
 }
 
+/// Send a cancellation report while draining late BDX BlockQuery messages.
+pub(super) async fn send_abort_report_draining_query(
+    exchange: &mut Exchange<'_>,
+    status: BdxStatus,
+) -> Result<(), Error> {
+    warn!("BDX: aborting the transfer ({:?})", status);
+
+    exchange
+        .send_with_ack_draining(PROTO_ID_BDX, OpCode::BlockQuery as u8, |_, wb| {
+            status.as_report().write(wb)?;
+            Ok(Some(sc::OpCode::StatusReport.meta()))
+        })
+        .await
+}
+
 /// Build the streaming `*Init` proposal (both drive modes, indefinite length).
 /// `max_block_size` is the largest block this node is willing to handle.
 /// `start_offset`, when non-zero, requests the transfer to begin at that byte

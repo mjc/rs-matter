@@ -44,7 +44,7 @@ use rs_matter::transport::exchange::Exchange;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::ReadBuf;
 
-use crate::common::e2e::new_default_runner;
+use crate::common::e2e::{new_default_runner, E2eLateBdxQueryRace};
 use crate::common::init_env_logger;
 
 const FILE_DESIGNATOR: &[u8] = b"firmware.ota";
@@ -778,6 +778,29 @@ impl ExchangeHandler for CancelDownloadWithUnackedBlockHandler<'_> {
     }
 }
 
+/// Cancel after Block(0) is acknowledged. The fake requestor then sends a
+/// reliable, same-exchange Query(1) without a piggyback ACK and queues the
+/// StatusReport ACK behind it in the server's RX channel.
+struct CancelDownloadWithLateBlockQueryHandler<'a>(&'a AtomicBool);
+
+impl ExchangeHandler for CancelDownloadWithLateBlockQueryHandler<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0u8; 1024];
+        let mut writer = responder.reply(&mut buf, Some(2048)).await?;
+        writer.block_buf()[..1024].fill(0xA5);
+        writer.commit(1024).await?;
+
+        writer.cancel().await?;
+        self.0.store(true, Ordering::Release);
+        assert!(
+            writer.write(&[0x5A]).await.is_err(),
+            "a cancelled writer must not send another block"
+        );
+        Ok(())
+    }
+}
+
 /// Accept a receiver-driven download, send one block, then finish the handler.
 /// This lets the client simulate a transport/session failure before cancellation.
 struct EndAfterFirstBlockHandler;
@@ -1202,6 +1225,187 @@ fn test_bdx_download_cancel_drains_unacked_block_before_status() {
                 })
                 .await?;
 
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// A reliable Query(1) with no stale piggyback ACK can occupy the shared RX
+/// buffer while the cancellation StatusReport is waiting for its ACK.
+#[test]
+fn test_bdx_download_cancel_acks_late_block_query_during_status_report() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let race = E2eLateBdxQueryRace::new();
+    let cancelled = AtomicBool::new(false);
+    let client_done = AtomicBool::new(false);
+
+    futures_lite::future::block_on(async {
+        select(
+            async {
+                let responder = runner.run_responder_with_late_bdx_query(
+                    CancelDownloadWithLateBlockQueryHandler(&cancelled),
+                    &race,
+                );
+                let done = core::future::poll_fn(|cx| {
+                    if client_done.load(Ordering::Acquire) {
+                        Poll::Ready(())
+                    } else {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                });
+                match select(responder, done).await {
+                    Either::First(result) => result,
+                    Either::Second(()) => Ok(()),
+                }
+            },
+            async {
+                let mut exchange = runner.initiate_exchange().await?;
+                exchange
+                    .send_with(|_, wb| {
+                        bdx::TransferInit {
+                            transfer_control: bdx::TransferControl {
+                                version: bdx::BDX_VERSION,
+                                sender_drive: true,
+                                receiver_drive: true,
+                                async_mode: false,
+                            },
+                            range_control: bdx::RangeControl::default(),
+                            max_block_size: 1024,
+                            start_offset: 0,
+                            length: 0,
+                            file_designator: FILE_DESIGNATOR,
+                            metadata: &[],
+                        }
+                        .write(wb)?;
+                        Ok(Some(bdx::OpCode::ReceiveInit.into()))
+                    })
+                    .await?;
+
+                exchange.recv_fetch().await?;
+                let accept = bdx::TransferAccept::parse(true, exchange.rx()?.payload())?;
+                assert!(accept.transfer_control.receiver_drive);
+                assert!(!accept.transfer_control.sender_drive);
+                exchange.rx_done()?;
+
+                exchange
+                    .send_with(|_, wb| {
+                        bdx::BlockQuery { block_counter: 0 }.write(wb)?;
+                        Ok(Some(bdx::OpCode::BlockQuery.into()))
+                    })
+                    .await?;
+
+                exchange.recv_fetch().await?;
+                assert_eq!(exchange.rx()?.meta().proto_opcode, bdx::OpCode::Block as u8);
+                let block = bdx::Block::parse(exchange.rx()?.payload())?;
+                assert_eq!(block.block_counter, 0);
+                assert_eq!(block.data, &[0xA5; 1024]);
+                exchange.rx_done()?;
+                exchange.acknowledge().await?;
+
+                race.arm_query();
+                {
+                    let mut query = core::pin::pin!(exchange.send_with(|_, wb| {
+                        bdx::BlockQuery { block_counter: 1 }.write(wb)?;
+                        Ok(Some(bdx::OpCode::BlockQuery.into()))
+                    }));
+                    let injected = core::future::poll_fn(|cx| {
+                        if race.query_injected() {
+                            Poll::Ready(())
+                        } else {
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                    });
+
+                    match select(query.as_mut(), injected).await {
+                        Either::First(result) => result?,
+                        Either::Second(()) => {}
+                    }
+                    assert!(race.query_injected());
+                }
+
+                assert!(race.status_report_sent());
+                let status_report_retried = core::future::poll_fn(|cx| {
+                    if race.status_report_retried() {
+                        Poll::Ready(())
+                    } else {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                });
+                match select(status_report_retried, Timer::after(Duration::from_secs(2))).await {
+                    Either::First(()) => {}
+                    Either::Second(()) => panic!(
+                        "StatusReport was not retransmitted; observed {} sends",
+                        race.status_report_attempts()
+                    ),
+                }
+                assert!(race.query_acknowledged());
+                assert_ne!(
+                    race.query_ack_counter(),
+                    race.status_report_counter(),
+                    "the Query ACK must use a fresh message counter"
+                );
+                assert!(race.status_report_retried());
+                assert!(race.status_report_retries_identical());
+                assert!(race.status_report_attempts() >= 2);
+                assert!(race.status_report_reliable());
+                assert_eq!(
+                    race.status_report_status(),
+                    bdx::BdxStatus::TransferFailedUnknownError as u32
+                );
+                assert!(
+                    !race.block_one_sent(),
+                    "cancellation must not send BDX Block(1)"
+                );
+                assert!(
+                    !race.block_eof_one_sent(),
+                    "cancellation must not send BDX BlockEOF(1)"
+                );
+
+                let cancellation = core::future::poll_fn(|cx| {
+                    if cancelled.load(Ordering::Acquire) {
+                        Poll::Ready(())
+                    } else {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                });
+                match select(cancellation, Timer::after(Duration::from_secs(2))).await {
+                    Either::First(()) => {}
+                    Either::Second(()) => {
+                        panic!("cancellation did not process the ACK queued behind Query(1)")
+                    }
+                }
+
+                let query_ack_received =
+                    core::future::poll_fn(|cx| match exchange.pending_retrans() {
+                        Ok(false) => Poll::Ready(Ok(())),
+                        Ok(true) => {
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                        Err(error) => Poll::Ready(Err(error)),
+                    });
+                match select(query_ack_received, Timer::after(Duration::from_secs(2))).await {
+                    Either::First(result) => result?,
+                    Either::Second(()) => panic!(
+                        "client did not consume Query(1) ACK ctr {} (report ctr {})",
+                        race.query_ack_counter(),
+                        race.status_report_counter()
+                    ),
+                }
+
+                assert!(!race.block_one_sent());
+                assert!(!race.block_eof_one_sent());
+                client_done.store(true, Ordering::Release);
                 Ok::<_, Error>(())
             },
         )

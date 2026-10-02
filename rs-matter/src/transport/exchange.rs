@@ -230,23 +230,42 @@ impl ExchangeId {
     /// Note also that if the uderlying session or exchange tracked by the Matter stack is dropped
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     async fn wait_tx<'a>(&self, matter: &'a Matter<'a>) -> Result<TxOutcome, Error> {
+        self.wait_tx_handling(matter, None).await
+    }
+
+    async fn wait_tx_handling<'a>(
+        &self,
+        matter: &'a Matter<'a>,
+        accept_while_retransmitting: Option<(u16, u8)>,
+    ) -> Result<TxOutcome, Error> {
         if let Some(delay) = self.retrans_delay_ms(matter)? {
             let expired = unwrap!(Instant::now().checked_add(Duration::from_millis(delay)));
 
             loop {
-                let mut notification = pin!(self.internal_wait_ack(matter));
+                let mut notification =
+                    pin!(self.internal_wait_ack(matter, accept_while_retransmitting));
                 let mut session_removed = pin!(matter.transport().wait_session_removed());
                 let mut timer = pin!(Timer::at(expired));
 
-                if !matches!(
-                    select3(&mut notification, &mut session_removed, &mut timer).await,
-                    Either3::Second(_)
-                ) {
-                    break;
+                match select3(&mut notification, &mut session_removed, &mut timer).await {
+                    Either3::First(packet) => {
+                        let mut packet = packet?;
+                        if self.retrans_delay_ms(matter)?.is_some()
+                            && !packet.buf.is_empty()
+                            && accept_while_retransmitting.is_some()
+                        {
+                            packet.clear_on_drop(true);
+                            self.acknowledge(matter).await?;
+                            continue;
+                        }
+                        break;
+                    }
+                    Either3::Second(_) => {
+                        // Bail out if the removed session was ours.
+                        self.with_state(matter, |_| Ok(()))?;
+                    }
+                    Either3::Third(_) => break,
                 }
-
-                // Bail out if the removed session was ours
-                self.with_state(matter, |_| Ok(()))?;
             }
 
             if self.retrans_delay_ms(matter)?.is_some() {
@@ -296,20 +315,41 @@ impl ExchangeId {
     async fn internal_wait_ack<'a>(
         &self,
         matter: &'a Matter<'a>,
+        accept_while_retransmitting: Option<(u16, u8)>,
     ) -> Result<PacketAccess<'a, MAX_RX_BUF_SIZE>, Error> {
         let rx = matter
             .transport
             .get_if_rx(|packet| {
                 self.retrans_delay_ms(matter)
                     .map(|retrans| {
-                        retrans.is_none()
-                            && (packet.buf.is_empty() || self.is_for_rx_packet(matter, packet))
+                        (packet.buf.is_empty() && retrans.is_none())
+                            || (!packet.buf.is_empty()
+                                && self.is_for_rx_packet(matter, packet)
+                                && (retrans.is_none()
+                                    || accept_while_retransmitting.is_some_and(
+                                        |(proto_id, proto_opcode)| {
+                                            packet.header.proto.proto_id == proto_id
+                                                && packet.header.proto.proto_opcode == proto_opcode
+                                                && packet.header.proto.get_vendor().is_none()
+                                                && packet.header.proto.is_reliable()
+                                        },
+                                    )))
                     })
                     .unwrap_or(true)
             })
             .await;
 
         self.with_state(matter, |_| Ok(rx))
+    }
+
+    async fn acknowledge(&self, matter: &Matter<'_>) -> Result<(), Error> {
+        if self.pending_ack(matter)? {
+            let tx = self.init_send(matter).await?;
+            if self.pending_ack(matter)? {
+                tx.complete::<MessageMeta>(0, 0, sc::OpCode::MRPStandAloneAck.into())?;
+            }
+        }
+        Ok(())
     }
 
     fn retrans_delay_ms<'a>(&self, matter: &'a Matter<'a>) -> Result<Option<u64>, Error> {
@@ -885,6 +925,13 @@ impl<'a> Sender<'a> {
     /// }
     /// ```
     pub async fn tx(&mut self) -> Result<Option<SenderTx<'a, '_>>, Error> {
+        self.tx_handling(None).await
+    }
+
+    async fn tx_handling(
+        &mut self,
+        accept_while_retransmitting: Option<(u16, u8)>,
+    ) -> Result<Option<SenderTx<'a, '_>>, Error> {
         trace!(
             "Sender::tx called, initial={}, complete={}",
             self.initial,
@@ -897,7 +944,11 @@ impl<'a> Sender<'a> {
 
         if !self.initial {
             trace!("Sender::tx - not initial, calling wait_tx");
-            let outcome = self.exchange.id.wait_tx(self.exchange.matter).await?;
+            let outcome = self
+                .exchange
+                .id
+                .wait_tx_handling(self.exchange.matter, accept_while_retransmitting)
+                .await?;
             trace!("Sender::tx - wait_tx returned {:?}", outcome);
             if outcome.is_done() {
                 // No need to re-transmit
@@ -1575,7 +1626,7 @@ impl<'a> Exchange<'a> {
 
         loop {
             let mut packet = {
-                let mut wait_ack = pin!(self.id.internal_wait_ack(self.matter));
+                let mut wait_ack = pin!(self.id.internal_wait_ack(self.matter, None));
                 let mut session_removed = pin!(self.matter.transport().wait_session_removed());
 
                 match select(&mut wait_ack, &mut session_removed).await {
@@ -1620,19 +1671,7 @@ impl<'a> Exchange<'a> {
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     #[inline(always)]
     pub async fn acknowledge(&mut self) -> Result<(), Error> {
-        if self.pending_ack()? {
-            let tx = self.id.init_send(self.matter).await?;
-
-            if self.pending_ack()? {
-                // Check whether we still need to send an ACK.
-                // Necessary because we `.await` above, and while we are awaiting, the transport
-                // might automatically send an ACK for us.
-                // (That is, if the global RX transport buffer happens to be already empty and if the other peer re-sends the message.)
-                tx.complete::<MessageMeta>(0, 0, sc::OpCode::MRPStandAloneAck.into())?;
-            }
-        }
-
-        Ok(())
+        self.id.acknowledge(self.matter).await
     }
 
     /// Utility for sending a message on this exchange that automatically handles all re-transmission logic
@@ -1676,9 +1715,35 @@ impl<'a> Exchange<'a> {
     where
         F: FnMut(&Exchange, &mut WriteBuf) -> Result<Option<MessageMeta>, Error>,
     {
+        self.send_with_handling(&mut f, None).await
+    }
+
+    /// Send reliably while standalone-ACKing selected same-exchange messages
+    /// that arrive before the outgoing message is acknowledged.
+    pub(crate) async fn send_with_ack_draining<F>(
+        &mut self,
+        proto_id: u16,
+        proto_opcode: u8,
+        mut f: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(&Exchange, &mut WriteBuf) -> Result<Option<MessageMeta>, Error>,
+    {
+        self.send_with_handling(&mut f, Some((proto_id, proto_opcode)))
+            .await
+    }
+
+    async fn send_with_handling<F>(
+        &mut self,
+        f: &mut F,
+        accept_while_retransmitting: Option<(u16, u8)>,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(&Exchange, &mut WriteBuf) -> Result<Option<MessageMeta>, Error>,
+    {
         let mut sender = self.sender()?;
 
-        while let Some(mut tx) = sender.tx().await? {
+        while let Some(mut tx) = sender.tx_handling(accept_while_retransmitting).await? {
             let (exchange, payload) = tx.split();
 
             let mut wb = WriteBuf::new(payload);

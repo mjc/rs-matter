@@ -621,9 +621,11 @@ impl Session {
         session_active_interval_ms: Option<u32>,
         session_idle_interval_ms: Option<u32>,
     ) -> Result<(Address, bool), Error> {
-        let ctr = if let Some(exchange_index) = exch_index {
-            let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
-            exchange.mrp.retrans.as_ref().map(RetransEntry::get_msg_ctr)
+        let ctr = if tx_header.proto.is_reliable() {
+            exch_index.and_then(|exchange_index| {
+                let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
+                exchange.mrp.retrans.as_ref().map(RetransEntry::get_msg_ctr)
+            })
         } else {
             None
         };

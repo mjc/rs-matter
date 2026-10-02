@@ -89,8 +89,11 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         // StatusReport transaction, which cannot share the exchange's MRP slot.
         self.exchange.wait_for_retransmission_ack().await?;
 
-        super::nego::send_abort_report(&mut self.exchange, BdxStatus::TransferFailedUnknownError)
-            .await?;
+        super::nego::send_abort_report_draining_query(
+            &mut self.exchange,
+            BdxStatus::TransferFailedUnknownError,
+        )
+        .await?;
         Ok(())
     }
 
