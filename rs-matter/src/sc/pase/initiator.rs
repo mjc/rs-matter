@@ -64,6 +64,7 @@ pub struct EstablishedPaseSession<'a, C: Crypto> {
     matter: &'a Matter<'a>,
     crypto: C,
     session_id: u32,
+    release_on_drop: bool,
 }
 
 impl<'a, C: Crypto> EstablishedPaseSession<'a, C> {
@@ -75,6 +76,17 @@ impl<'a, C: Crypto> EstablishedPaseSession<'a, C> {
         Exchange::initiate_for_session(self.matter, &self.crypto, self.session_id)
     }
 
+    /// Open an exchange and transfer the session to the Matter stack.
+    ///
+    /// The stack-managed session remains available for later exchanges and is
+    /// removed by the normal session lifecycle. If opening the exchange fails,
+    /// this handle still releases the session when dropped.
+    pub fn into_exchange(mut self) -> Result<Exchange<'a>, Error> {
+        let exchange = Exchange::initiate_for_session(self.matter, &self.crypto, self.session_id)?;
+        self.release_on_drop = false;
+        Ok(exchange)
+    }
+
     pub fn attestation_challenge(&self) -> Result<[u8; 16], Error> {
         self.open_exchange()?.attestation_challenge()
     }
@@ -82,7 +94,9 @@ impl<'a, C: Crypto> EstablishedPaseSession<'a, C> {
 
 impl<C: Crypto> Drop for EstablishedPaseSession<'_, C> {
     fn drop(&mut self) {
-        self.matter.release_pase_session(self.session_id);
+        if self.release_on_drop {
+            self.matter.release_pase_session(self.session_id);
+        }
     }
 }
 
@@ -163,6 +177,7 @@ impl<C: Crypto> PaseInitiator<C> {
             matter: exchange.matter(),
             crypto: initiator.crypto,
             session_id,
+            release_on_drop: true,
         })
     }
 

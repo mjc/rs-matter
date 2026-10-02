@@ -1087,17 +1087,9 @@ impl Transport {
 
         // Establish a new PASE session to this peer.
         let exchange = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
-        PaseInitiator::perform(exchange, &crypto, passcode).await?;
-
-        let session_id = matter.with_state(|state| {
-            state
-                .sessions
-                .get_pase_for_addr(&peer_addr)
-                .map(|s| s.id)
-                .ok_or_else(|| Error::from(ErrorCode::NoSession))
-        })?;
-
-        self.initiate_for_session(matter, crypto, session_id)
+        PaseInitiator::perform(exchange, &crypto, passcode)
+            .await?
+            .into_exchange()
     }
 
     pub(crate) fn initiate_for_session<'a, C: Crypto>(
