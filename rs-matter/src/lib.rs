@@ -204,6 +204,28 @@ impl<'a> Matter<'a> {
         }
     }
 
+    /// Allocate and initialize a Matter object directly on the heap.
+    ///
+    /// Use this constructor when the platform has large fixed-capacity Matter
+    /// state and the current stack is too small to construct `Self` by value.
+    #[cfg(feature = "alloc")]
+    pub fn new_boxed(
+        dev_det: &'a BasicInfoConfig<'a>,
+        dev_comm: BasicCommData,
+        dev_att: &'a dyn DeviceAttestation,
+        port: u16,
+    ) -> alloc::boxed::Box<Self> {
+        use crate::utils::init::InitMaybeUninit;
+
+        let mut matter = alloc::boxed::Box::<Self>::new_uninit();
+        matter
+            .as_mut()
+            .init_with(Self::init(dev_det, dev_comm, dev_att, port));
+
+        // SAFETY: `init_with` initializes the entire Matter value in this allocation.
+        unsafe { matter.assume_init() }
+    }
+
     /// Create an in-place initializer for a Matter object.
     ///
     /// # Parameters
@@ -1231,5 +1253,18 @@ pub mod test {
             &crate::dm::devices::test::TEST_DEV_ATT,
             0,
         )
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn new_boxed_initializes_matter_in_place() {
+        let matter = Matter::new_boxed(
+            &crate::dm::devices::test::TEST_DEV_DET,
+            crate::dm::devices::test::TEST_DEV_COMM,
+            &crate::dm::devices::test::TEST_DEV_ATT,
+            5540,
+        );
+
+        assert_eq!(matter.port(), 5540);
     }
 }
