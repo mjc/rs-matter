@@ -20,7 +20,6 @@
 #[allow(dead_code)]
 mod common;
 
-use core::future::Future;
 use rs_matter::cert::{gen::VALID_FOREVER, CertRef, MAX_CERT_TLV_AND_ASN1_LEN};
 use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Rng, SecretKey,
@@ -75,19 +74,17 @@ struct CaseIdentityHandler<'a, C> {
 }
 
 impl<C: Crypto> ExchangeHandler for CaseIdentityHandler<'_, C> {
-    fn handle(&self, mut exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
-        async move {
-            exchange.recv_fetch().await?;
-            if exchange.rx()?.meta().opcode::<OpCode>()? == OpCode::CASESigma1 {
-                if let Some(peer) = CaseResponder::new(self.crypto)
-                    .handle_with_identity(exchange)
-                    .await?
-                {
-                    let _ = self.peers.send(peer).await;
-                }
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        exchange.recv_fetch().await?;
+        if exchange.rx()?.meta().opcode::<OpCode>()? == OpCode::CASESigma1 {
+            if let Some(peer) = CaseResponder::new(self.crypto)
+                .handle_with_identity(exchange)
+                .await?
+            {
+                let _ = self.peers.send(peer).await;
             }
-            Ok(())
         }
+        Ok(())
     }
 }
 #[test]
