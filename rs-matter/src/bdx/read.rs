@@ -72,6 +72,32 @@ impl<'a> BdxReader<'a> {
         self.len
     }
 
+    /// Cancel an active transfer and report `TransferFailedUnknownError` to the peer.
+    ///
+    /// This is an async operation because BDX cancellation is a wire message, so it
+    /// must be awaited explicitly. If a pending [`read`](Self::read) future is no
+    /// longer needed, drop that future and call `cancel` on the reader it borrowed.
+    /// A partially consumed block is released before the failure report is sent.
+    pub async fn cancel(&mut self) -> Result<(), Error> {
+        if self.finished {
+            return Ok(());
+        }
+
+        // Make cancellation terminal before touching the exchange. If releasing
+        // the held packet or sending the abort report fails, later reads must not
+        // issue another BlockQuery.
+        self.finished = true;
+
+        if self.holding {
+            self.exchange.rx_done()?;
+            self.holding = false;
+        }
+
+        super::nego::send_abort_report(&mut self.exchange, BdxStatus::TransferFailedUnknownError)
+            .await?;
+        Ok(())
+    }
+
     /// Read the next bytes of the transfer into `buf`, returning the number of
     /// bytes read. Returns `0` once the whole transfer has been received.
     ///

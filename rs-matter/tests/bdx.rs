@@ -27,7 +27,8 @@
 mod common;
 
 use core::future::Future;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::task::Poll;
 
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
@@ -38,9 +39,10 @@ use rs_matter::bdx::{
 };
 use rs_matter::error::Error;
 use rs_matter::respond::ExchangeHandler;
-use rs_matter::sc::OpCode as ScOpCode;
+use rs_matter::sc::{OpCode as ScOpCode, StatusReport};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::storage::ReadBuf;
 
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
@@ -539,6 +541,296 @@ fn test_bdx_read_aborted_mid_stream() {
             })
             .await
         })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// The peer sends one block and waits for the next receiver control message.
+/// Cancellation must send a BDX StatusReport instead of requesting another block.
+struct WaitForCancelHandler;
+
+impl ExchangeHandler for WaitForCancelHandler {
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        exchange.recv_fetch().await?;
+        exchange.rx_done()?;
+        exchange
+            .send_with(|_, wb| {
+                bdx::TransferAccept {
+                    receive: true,
+                    transfer_control: bdx::TransferControl {
+                        version: bdx::BDX_VERSION,
+                        sender_drive: true,
+                        receiver_drive: false,
+                        async_mode: false,
+                    },
+                    range_control: bdx::RangeControl::default(),
+                    max_block_size: 256,
+                    length: 0,
+                    metadata: &[],
+                }
+                .write(wb)?;
+                Ok(Some(bdx::OpCode::ReceiveAccept.into()))
+            })
+            .await?;
+
+        exchange
+            .send_with(|_, wb| {
+                bdx::Block {
+                    block_counter: 0,
+                    data: b"abcd",
+                }
+                .write(wb)?;
+                Ok(Some(bdx::OpCode::Block.into()))
+            })
+            .await?;
+
+        exchange.recv_fetch().await?;
+        let meta = exchange.rx()?.meta();
+        assert_eq!(meta.proto_id, rs_matter::sc::PROTO_ID_SECURE_CHANNEL);
+        assert_eq!(meta.proto_opcode, ScOpCode::StatusReport as u8);
+        let (proto_id, proto_code) = {
+            let mut rb = ReadBuf::new(exchange.rx()?.payload());
+            let status = StatusReport::read(&mut rb)?;
+            (status.proto_id, status.proto_code)
+        };
+        assert_eq!(proto_id, bdx::PROTO_ID_BDX as u32);
+        assert_eq!(
+            proto_code,
+            bdx::BdxStatus::TransferFailedUnknownError as u16
+        );
+        exchange.rx_done()?;
+        Ok(())
+    }
+}
+
+/// The peer accepts an upload and must observe cancellation instead of data.
+struct WaitForUploadCancelHandler<'a>(&'a AtomicBool);
+
+impl ExchangeHandler for WaitForUploadCancelHandler<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxUploadResponder::accept(exchange).await?;
+        let mut reader = responder.reply().await?;
+        let mut buf = [0u8; 16];
+        assert!(
+            reader.read(&mut buf).await.is_err(),
+            "writer cancellation must arrive before any data block"
+        );
+        self.0.store(true, Ordering::Release);
+        Ok(())
+    }
+}
+
+/// Accept a receiver-driven download, send one block, then finish the handler.
+/// This lets the client simulate a transport/session failure before cancellation.
+struct EndAfterFirstBlockHandler;
+
+impl ExchangeHandler for EndAfterFirstBlockHandler {
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        exchange.recv_fetch().await?;
+        exchange.rx_done()?;
+        exchange
+            .send_with(|_, wb| {
+                bdx::TransferAccept {
+                    receive: true,
+                    transfer_control: bdx::TransferControl {
+                        version: bdx::BDX_VERSION,
+                        sender_drive: false,
+                        receiver_drive: true,
+                        async_mode: false,
+                    },
+                    range_control: bdx::RangeControl::default(),
+                    max_block_size: 256,
+                    length: 0,
+                    metadata: &[],
+                }
+                .write(wb)?;
+                Ok(Some(bdx::OpCode::ReceiveAccept.into()))
+            })
+            .await?;
+
+        exchange.recv_fetch().await?;
+        assert_eq!(
+            exchange.rx()?.meta().proto_opcode,
+            bdx::OpCode::BlockQuery as u8
+        );
+        exchange.rx_done()?;
+        exchange
+            .send_with(|_, wb| {
+                bdx::Block {
+                    block_counter: 0,
+                    data: b"abcd",
+                }
+                .write(wb)?;
+                Ok(Some(bdx::OpCode::Block.into()))
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+/// Cancelling a partially consumed download reports failure to the peer and
+/// leaves the reader terminal, so it cannot request or receive another block.
+#[test]
+fn test_bdx_reader_cancel_sends_status_and_stops_transfer() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(WaitForCancelHandler), async {
+            let exchange = runner.initiate_exchange().await?;
+            let mut reader = exchange.download(FILE_DESIGNATOR, None).await?;
+
+            with_timeout(async {
+                let mut buf = [0u8; 2];
+                assert_eq!(reader.read(&mut buf).await?, 2);
+                assert_eq!(&buf, b"ab");
+
+                reader.cancel().await?;
+
+                let mut buf = [0u8; 8];
+                assert_eq!(reader.read(&mut buf).await?, 0);
+                Ok::<_, Error>(())
+            })
+            .await
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// Even when the abort StatusReport cannot be sent, cancellation is terminal and
+/// the reader must not try to send another BlockQuery.
+#[test]
+fn test_bdx_reader_stays_terminal_when_cancel_send_fails() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(EndAfterFirstBlockHandler), async {
+            let exchange = runner.initiate_exchange().await?;
+            let session_id = runner
+                .matter_client()
+                .with_state(|state| state.sessions.iter().next().unwrap().id());
+            let mut reader = exchange.download(FILE_DESIGNATOR, None).await?;
+
+            with_timeout(async {
+                let mut buf = [0u8; 2];
+                assert_eq!(reader.read(&mut buf).await?, 2);
+                assert_eq!(&buf, b"ab");
+
+                runner
+                    .matter_client()
+                    .with_state(|state| assert!(state.sessions.remove(session_id).is_some()));
+                assert!(reader.cancel().await.is_err());
+
+                let mut buf = [0u8; 8];
+                assert_eq!(reader.read(&mut buf).await?, 0);
+                Ok::<_, Error>(())
+            })
+            .await
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// Writer cancellation sends the failure StatusReport before any staged bytes,
+/// and later writes fail locally.
+#[test]
+fn test_bdx_writer_cancel_sends_status_and_stops_transfer() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let report_received = AtomicBool::new(false);
+
+    futures_lite::future::block_on(async {
+        select(
+            runner.run_responder(WaitForUploadCancelHandler(&report_received)),
+            async {
+                let exchange = runner.initiate_exchange().await?;
+                let mut tx_buf = [0u8; 128];
+                let mut writer = exchange.upload(&mut tx_buf, FILE_DESIGNATOR, None).await?;
+
+                assert_eq!(writer.write(b"staged data").await?, 11);
+                writer.cancel().await?;
+                assert!(writer.write(b"later data").await.is_err());
+
+                with_timeout(async {
+                    core::future::poll_fn(|cx| {
+                        if report_received.load(Ordering::Acquire) {
+                            Poll::Ready(())
+                        } else {
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                    })
+                    .await;
+                    Ok::<_, Error>(())
+                })
+                .await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// Dropping a pending cancel future still leaves the writer terminal; the abort
+/// report already queued on the exchange reaches the peer and no block follows.
+#[test]
+fn test_bdx_writer_cancel_future_drop_is_terminal() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let report_received = AtomicBool::new(false);
+
+    futures_lite::future::block_on(async {
+        select(
+            runner.run_responder(WaitForUploadCancelHandler(&report_received)),
+            async {
+                let exchange = runner.initiate_exchange().await?;
+                let mut tx_buf = [0u8; 128];
+                let mut writer = exchange.upload(&mut tx_buf, FILE_DESIGNATOR, None).await?;
+                assert_eq!(writer.write(b"staged data").await?, 11);
+
+                let cancel_pending = {
+                    let mut cancel = core::pin::pin!(writer.cancel());
+                    core::future::poll_fn(|cx| match cancel.as_mut().poll(cx) {
+                        Poll::Pending => Poll::Ready(true),
+                        Poll::Ready(_) => Poll::Ready(false),
+                    })
+                    .await
+                };
+                assert!(cancel_pending, "cancel should wait for the peer ACK");
+                assert!(
+                    writer.write(b"later data").await.is_err(),
+                    "dropping cancel must not re-enable block traffic"
+                );
+
+                with_timeout(async {
+                    core::future::poll_fn(|cx| {
+                        if report_received.load(Ordering::Acquire) {
+                            Poll::Ready(())
+                        } else {
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                    })
+                    .await;
+                    Ok::<_, Error>(())
+                })
+                .await?;
+                Ok::<_, Error>(())
+            },
+        )
         .coalesce()
         .await
         .unwrap();

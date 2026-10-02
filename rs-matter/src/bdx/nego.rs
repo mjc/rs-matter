@@ -79,11 +79,19 @@ pub(super) async fn send_status_report(
 
 /// Send a BDX failure `StatusReport` and return an error, aborting the transfer.
 pub(super) async fn abort<T>(exchange: &mut Exchange<'_>, status: BdxStatus) -> Result<T, Error> {
-    warn!("BDX: aborting the transfer ({:?})", status);
-
-    send_status_report(exchange, status).await?;
+    send_abort_report(exchange, status).await?;
 
     Err(ErrorCode::Invalid.into())
+}
+
+/// Send the standard failure report for a BDX transfer being aborted.
+pub(super) async fn send_abort_report(
+    exchange: &mut Exchange<'_>,
+    status: BdxStatus,
+) -> Result<(), Error> {
+    warn!("BDX: aborting the transfer ({:?})", status);
+
+    send_status_report(exchange, status).await
 }
 
 /// Build the streaming `*Init` proposal (both drive modes, indefinite length).

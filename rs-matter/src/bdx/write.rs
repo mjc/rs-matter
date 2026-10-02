@@ -45,6 +45,7 @@ pub struct BdxWriter<'a, 'b> {
     /// counter of the next `BlockQuery`.
     counter: u32,
     block_len: usize,
+    cancelled: bool,
 }
 
 impl<'a, 'b> BdxWriter<'a, 'b> {
@@ -65,7 +66,27 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
             max_block_size,
             counter: 0,
             block_len: 0,
+            cancelled: false,
         }
+    }
+
+    /// Cancel an active transfer and report `TransferFailedUnknownError` to the peer.
+    ///
+    /// This is an async operation because BDX cancellation is a wire message, so it
+    /// must be awaited explicitly. If a pending write future is no longer needed,
+    /// drop that future and call `cancel` on the writer it borrowed.
+    pub async fn cancel(&mut self) -> Result<(), Error> {
+        if self.cancelled {
+            return Ok(());
+        }
+
+        // If sending the report fails or the future is dropped while awaiting it,
+        // subsequent writer calls must not emit any more BDX blocks.
+        self.cancelled = true;
+
+        super::nego::send_abort_report(&mut self.exchange, BdxStatus::TransferFailedUnknownError)
+            .await?;
+        Ok(())
     }
 
     /// Stage and send `data`, returning the number of bytes accepted (`< data.len()`
@@ -74,6 +95,10 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// This is also the [`embedded_io_async::Write`] implementation; the inherent
     /// method is kept so callers need not import the trait.
     pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
+        if self.cancelled {
+            return Err(ErrorCode::Invalid.into());
+        }
+
         if data.is_empty() {
             return Ok(0);
         }
@@ -110,6 +135,10 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// Send `len` bytes - previously written into [`block_buf`](Self::block_buf) -
     /// as one block. `len` must not exceed [`max_block_size`](Self::max_block_size).
     pub async fn commit(&mut self, len: usize) -> Result<(), Error> {
+        if self.cancelled {
+            return Err(ErrorCode::Invalid.into());
+        }
+
         if len > self.max_block_size {
             // Truncating here would silently drop the tail of the caller's block;
             // surface the contract violation instead.
@@ -130,6 +159,10 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// Send the staged bytes as one block, driving/awaiting acknowledgement per
     /// the negotiated drive mode.
     async fn send_block(&mut self, is_eof: bool) -> Result<(), Error> {
+        if self.cancelled {
+            return Err(ErrorCode::Invalid.into());
+        }
+
         let counter = self.counter;
 
         if matches!(self.drive, Drive::Follower) {
