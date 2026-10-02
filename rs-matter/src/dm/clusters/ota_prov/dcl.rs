@@ -237,7 +237,7 @@ impl<H: OtaHttp> DclImages<'_, H> {
             file_designator: designator,
             // The designator (`<vid>-<pid>-<version>`) is well under 32 bytes, so
             // it doubles as the update token - identifying the image at apply time.
-            update_token: designator.as_bytes(),
+            update_token: heapless::Vec::from_slice(designator.as_bytes()).ok()?,
             size: Some(mv.ota_file_size),
             user_consent_needed: false,
         })

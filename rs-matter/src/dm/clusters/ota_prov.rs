@@ -79,7 +79,9 @@ pub struct OtaImageMeta<'a> {
     /// apply/notify phase with this query (e.g. an image id, or a key into its own
     /// per-flow state). It is *not* used for the download (that's the
     /// [`file_designator`](Self::file_designator) carried in the `bdx://` URL).
-    pub update_token: &'a [u8],
+    /// Stored inline so the token may be minted from a live registry independently
+    /// of the designator buffer borrowed for this response.
+    pub update_token: heapless::Vec<u8, 32>,
     /// The total image size in bytes, if known (enables a definite-length
     /// transfer and download-progress reporting on the requestor).
     pub size: Option<u64>,
@@ -370,7 +372,7 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
             .image_uri(Some(uri.as_str()))?
             .software_version(Some(image.version))?
             .software_version_string(Some(version_str.as_str()))?
-            .update_token(Some(Octets(image.update_token)))?
+            .update_token(Some(Octets(image.update_token.as_slice())))?
             // Consent policy is the registry's; forward its decision verbatim.
             .user_consent_needed(Some(image.user_consent_needed))?
             .metadata_for_requestor(None)?
@@ -546,5 +548,56 @@ where
         }
 
         writer.finish().await
+    }
+}
+
+#[cfg(test)]
+mod registry_lifetime_tests {
+    use super::{OtaImageMeta, OtaImagesRegistry, OtaQueryOutcome};
+
+    struct BorrowedImage {
+        designator: String,
+        update_token: Vec<u8>,
+    }
+
+    impl OtaImagesRegistry for BorrowedImage {
+        async fn query<'b>(
+            &self,
+            _vendor_id: u16,
+            _product_id: u16,
+            _current_version: u32,
+            _requestor_can_consent: bool,
+            designator_buf: &'b mut [u8],
+        ) -> OtaQueryOutcome<'b> {
+            let designator = self.designator.as_bytes();
+            let Some(slot) = designator_buf.get_mut(..designator.len()) else {
+                return OtaQueryOutcome::NotAvailable;
+            };
+            slot.copy_from_slice(designator);
+            OtaQueryOutcome::Available(OtaImageMeta {
+                version: 1,
+                file_designator: core::str::from_utf8(slot).unwrap(),
+                update_token: heapless::Vec::from_slice(&self.update_token).unwrap(),
+                size: None,
+                user_consent_needed: false,
+            })
+        }
+    }
+
+    #[test]
+    fn query_copies_runtime_token_and_borrows_designator_buffer() {
+        let image = BorrowedImage {
+            designator: String::from("runtime-image"),
+            update_token: vec![1, 2, 3],
+        };
+        let mut designator_buf = [0; 128];
+        let outcome =
+            futures_lite::future::block_on(image.query(1, 2, 0, false, &mut designator_buf));
+
+        let OtaQueryOutcome::Available(meta) = outcome else {
+            panic!("registered image must be offered");
+        };
+        assert_eq!(meta.file_designator, "runtime-image");
+        assert_eq!(meta.update_token.as_slice(), [1, 2, 3]);
     }
 }
