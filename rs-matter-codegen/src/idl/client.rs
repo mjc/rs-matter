@@ -1009,10 +1009,9 @@ fn client_trait(
                     use self::#cmd_requests_trait_name as _Cmds;
 
                     #chunk_binding = _ImClient::invoke_with(self.exchange, None, |msg| {
-                        // `suppress_response` and `timed_request` are
-                        // skipped — `InvReqBuilder` fills them in as
-                        // `false` on the wire (the common-case
-                        // default). The view step
+                        // The native sender initializes both required
+                        // header fields from its transaction mode. The
+                        // view step
                         // (`<cluster>_inv()`) is a no-op typed
                         // wrapper; `<cmd>(endpoint)` is the
                         // codegen-emitted push method on the view
@@ -1044,8 +1043,9 @@ fn client_trait(
                     use self::#cmd_requests_trait_name as _Cmds;
 
                     #chunk_binding = _ImClient::invoke_with(self.exchange, None, |msg| {
-                        // `suppress_response` / `timed_request`
-                        // skipped — see the parameterized branch.
+                        // The native sender initializes both required
+                        // header fields from its transaction mode; see
+                        // the parameterized branch.
                         // `.<cluster>_inv()` enters the cluster
                         // view; `.<cmd>(endpoint)?` pushes the
                         // empty-request command (possibly `cmd_<cmd>`

@@ -194,7 +194,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         mut build: B,
     ) -> Result<InvokeRespChunk<'a>, Error>
     where
-        B: FnMut(InvReqBuilder<InvokeSender<'a>>) -> Result<InvokeSender<'a>, Error>,
+        B: FnMut(InvReqBuilder<InvokeSender<'a>, 2>) -> Result<InvokeSender<'a>, Error>,
     {
         // Drives the retransmit loop on the caller's behalf:
         // the `build` closure is (re-)run on every framework attempt
@@ -219,7 +219,10 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     ///
     /// # Returns
     /// - `Ok(InvokeSender)` ready for the caller to drive manually via `InvokeSender::tx()`.
-    ///   The first call to [`InvokeSender::tx`] yields the initial builder.
+    ///   The first call to [`InvokeSender::tx`] yields a builder with
+    ///   `SuppressResponse = false` and `TimedRequest` matching whether
+    ///   this call performed a timed-request handshake. Callers build only
+    ///   the `InvokeRequests` array.
     /// - `Err` if the transaction fails at any point (I/O, etc.)
     ///
     /// # Lifecycle
@@ -235,6 +238,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         let sender = exchange.into_sender()?;
         Ok(InvokeSender {
             state: InvokeSenderState::Ready(sender),
+            timed_request: timed_timeout_ms.is_some(),
         })
     }
 
@@ -743,6 +747,7 @@ impl<'a> WriteRespHandle<'a> {
 /// `InvokeSender` and tempt users to drive the TX buffer by hand.
 pub struct InvokeSender<'a> {
     state: InvokeSenderState<'a>,
+    timed_request: bool,
 }
 
 enum InvokeSenderState<'a> {
@@ -775,7 +780,7 @@ impl<'a> InvokeSender<'a> {
     /// to yield `TxOutcome::BuildRequest(builder)` because no message has been sent yet.
     pub async fn tx(
         mut self,
-    ) -> Result<TxOutcome<InvReqBuilder<InvokeSender<'a>>, InvokeRespChunk<'a>>, Error> {
+    ) -> Result<TxOutcome<InvReqBuilder<InvokeSender<'a>, 2>, InvokeRespChunk<'a>>, Error> {
         // 1. If we're in Slot state, commit the bytes we just built.
         let sender = match self.state {
             InvokeSenderState::Slot(slot) => slot.commit()?,
@@ -787,8 +792,11 @@ impl<'a> InvokeSender<'a> {
             Either::Left(tx) => {
                 // Re-build needed (initial or retransmit). Move to
                 // Slot state and hand back a fresh builder.
+                let timed_request = self.timed_request;
                 self.state = InvokeSenderState::Slot(InvokeSenderSlot { tx, cursor: 0 });
-                let builder = InvReqBuilder::new(self, &TLVTag::Anonymous)?;
+                let builder = InvReqBuilder::new(self, &TLVTag::Anonymous)?
+                    .suppress_response(false)?
+                    .timed_request(timed_request)?;
                 Ok(TxOutcome::BuildRequest(builder))
             }
             Either::Right(exchange) => {

@@ -40,7 +40,7 @@ fn test_client_invoke_sender_non_chunked() {
     block_on(
         select(im.run(handler), async {
             let exchange = im.initiate_exchange().await?;
-            let mut sender = exchange.invoke_sender(None).await?;
+            let mut sender = exchange.invoke_sender(Some(1_000)).await?;
 
             // Drive the retransmit loop until the framework hands us
             // the first response chunk.
@@ -48,8 +48,6 @@ fn test_client_invoke_sender_non_chunked() {
                 match sender.tx().await? {
                     TxOutcome::BuildRequest(builder) => {
                         sender = builder
-                            .suppress_response(false)?
-                            .timed_request(false)?
                             .invoke_requests()?
                             .push()?
                             .path(0, echo_cluster::ID, echo_cluster::Commands::EchoReq as u32)?
