@@ -80,6 +80,9 @@ extern crate alloc;
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
 
+#[cfg(all(test, feature = "log", not(feature = "defmt")))]
+pub(crate) mod test_log;
+
 pub mod acl;
 pub mod attest;
 pub mod bdx;

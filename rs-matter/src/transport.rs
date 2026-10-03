@@ -70,6 +70,14 @@ use session::{Session, Sessions};
 
 use self::mrp::mrp_log;
 
+fn log_packet_payload(proto: &ProtoHdr, payload: &[u8]) {
+    #[cfg(feature = "log-tlv-payload")]
+    debug!("{}", Packet::<0>::display_payload(proto, payload));
+
+    #[cfg(not(feature = "log-tlv-payload"))]
+    let _ = (proto, payload);
+}
+
 mod dedup;
 
 pub mod exchange;
@@ -1921,22 +1929,9 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         if new_exchange { " (new exchange)" } else { "" }
                     );
 
-                    #[cfg(feature = "log-tlv-payload")]
-                    debug!(
-                        "{}",
-                        Packet::<0>::display_payload(
-                            &packet.header.proto,
-                            &packet.buf[core::cmp::min(packet.payload_start, packet.buf.len())..]
-                        )
-                    );
-
-                    #[cfg(not(feature = "log-tlv-payload"))]
-                    trace!(
-                        "{}",
-                        Packet::<0>::display_payload(
-                            &packet.header.proto,
-                            &packet.buf[core::cmp::min(packet.payload_start, packet.buf.len())..]
-                        )
+                    log_packet_payload(
+                        &packet.header.proto,
+                        &packet.buf[core::cmp::min(packet.payload_start, packet.buf.len())..],
                     );
 
                     return Ok(true);
@@ -2259,22 +2254,9 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             );
         }
 
-        #[cfg(feature = "log-tlv-payload")]
-        debug!(
-            "{}",
-            Packet::<0>::display_payload(
-                &packet.header.proto,
-                &packet.buf[packet.payload_start..payload_end]
-            )
-        );
-
-        #[cfg(not(feature = "log-tlv-payload"))]
-        trace!(
-            "{}",
-            Packet::<0>::display_payload(
-                &packet.header.proto,
-                &packet.buf[packet.payload_start..payload_end]
-            )
+        log_packet_payload(
+            &packet.header.proto,
+            &packet.buf[packet.payload_start..payload_end],
         );
 
         unwrap!(packet.buf.resize_default(N));
@@ -3023,6 +3005,31 @@ mod tests {
 
     fn test_matter() -> Matter<'static> {
         Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0)
+    }
+
+    #[cfg(all(
+        feature = "log",
+        not(feature = "defmt"),
+        not(feature = "log-tlv-payload")
+    ))]
+    #[test]
+    fn packet_payload_is_not_logged_at_trace_level_by_default() {
+        let proto = ProtoHdr::default();
+        let payload = b"cred-canary";
+        let formatted = Packet::<0>::display_payload(&proto, payload).to_string();
+        assert!(formatted.contains("63, 72, 65, 64"));
+
+        let logs = crate::test_log::capture(log::LevelFilter::Trace, || {
+            log::trace!("test-log-capture-canary");
+            log_packet_payload(&proto, payload);
+        });
+
+        assert!(logs
+            .iter()
+            .any(|message| message.contains("test-log-capture-canary")));
+        assert!(!logs
+            .iter()
+            .any(|message| message.contains("63, 72, 65, 64")));
     }
 
     #[test]

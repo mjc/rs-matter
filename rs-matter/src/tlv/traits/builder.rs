@@ -368,12 +368,9 @@ where
 
     /// Write the TLV type into the writer.
     #[cfg(not(feature = "defmt"))]
-    pub fn set(mut self, tlv: &T) -> Result<P, Error>
-    where
-        T: core::fmt::Debug,
-    {
+    pub fn set(mut self, tlv: &T) -> Result<P, Error> {
         #[cfg(feature = "log")]
-        log::debug!("{:?}::TLV -> {:?} +", self, tlv);
+        log::debug!("{:?}::TLV +", self);
 
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
@@ -381,11 +378,8 @@ where
     }
 
     #[cfg(feature = "defmt")]
-    pub fn set(mut self, tlv: &T) -> Result<P, Error>
-    where
-        T: core::fmt::Debug + defmt::Format,
-    {
-        defmt::debug!("{:?}::TLV[] -> {:?} +", self, tlv);
+    pub fn set(mut self, tlv: &T) -> Result<P, Error> {
+        defmt::debug!("{:?}::TLV +", self);
 
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
@@ -466,12 +460,9 @@ where
 
     /// Push a new element into the array.
     #[cfg(not(feature = "defmt"))]
-    pub fn push(mut self, tlv: &T) -> Result<Self, Error>
-    where
-        T: core::fmt::Debug,
-    {
+    pub fn push(mut self, tlv: &T) -> Result<Self, Error> {
         #[cfg(feature = "log")]
-        log::debug!("{:?}::TLV[] -> {:?} +", self, tlv);
+        log::debug!("{:?}::TLV[] +", self);
 
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
@@ -479,11 +470,8 @@ where
     }
 
     #[cfg(feature = "defmt")]
-    pub fn push(mut self, tlv: &T) -> Result<Self, Error>
-    where
-        T: core::fmt::Debug + defmt::Format,
-    {
-        defmt::debug!("{:?}::TLV[] -> {:?} +", self, tlv);
+    pub fn push(mut self, tlv: &T) -> Result<Self, Error> {
+        defmt::debug!("{:?}::TLV[] +", self);
 
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
@@ -563,9 +551,9 @@ where
     /// Write the Utf8 string type into the writer.
     pub fn set(mut self, tlv: Utf8Str<'_>) -> Result<P, Error> {
         #[cfg(feature = "defmt")]
-        defmt::debug!("{:?}::Utf8 -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::Utf8 +", self);
         #[cfg(feature = "log")]
-        ::log::debug!("{:?}::Utf8 -> {:?} +", self, tlv);
+        ::log::debug!("{:?}::Utf8 +", self);
 
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
@@ -636,9 +624,9 @@ where
     /// Push a new Utf8 string into the array.
     pub fn push(mut self, tlv: Utf8Str<'_>) -> Result<Self, Error> {
         #[cfg(feature = "defmt")]
-        defmt::debug!("{:?}::Utf8[] -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::Utf8[] +", self);
         #[cfg(feature = "log")]
-        ::log::debug!("{:?}::Utf8[] -> {:?} +", self, tlv);
+        ::log::debug!("{:?}::Utf8[] +", self);
 
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
@@ -717,9 +705,9 @@ where
     /// Write the TLV type into the writer.
     pub fn set(mut self, tlv: Octets<'_>) -> Result<P, Error> {
         #[cfg(feature = "defmt")]
-        defmt::debug!("{:?}::Octets -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::Octets +", self);
         #[cfg(feature = "log")]
-        ::log::debug!("{:?}::Octets -> {:?} +", self, tlv);
+        ::log::debug!("{:?}::Octets +", self);
 
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
@@ -790,9 +778,9 @@ where
     /// Push a new octet string into the array.
     pub fn push(mut self, tlv: Octets<'_>) -> Result<Self, Error> {
         #[cfg(feature = "defmt")]
-        defmt::debug!("{:?}::Octets[] -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::Octets[] +", self);
         #[cfg(feature = "log")]
-        ::log::debug!("{:?}::Octets[] -> {:?} +", self, tlv);
+        ::log::debug!("{:?}::Octets[] +", self);
 
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
@@ -1599,5 +1587,44 @@ mod tests {
 
         let arr = ToTLVArrayBuilder::<_, u8>::new(root(&mut wb), &TLVTag::Anonymous).unwrap();
         assert_eq!(format!("{arr:?}"), "\"root\"[]");
+    }
+
+    #[test]
+    #[cfg(all(feature = "log", not(feature = "defmt")))]
+    fn builder_debug_logs_do_not_include_tlv_values() {
+        const SECRET: &str = "credential-canary-7b19";
+
+        let logs = crate::test_log::capture(log::LevelFilter::Trace, || {
+            log::trace!("test-log-capture-canary");
+            let mut buf = [0; 256];
+            let mut wb = WriteBuf::new(&mut buf);
+
+            OctetsBuilder::new(root(&mut wb), &TLVTag::Context(3))
+                .set(Octets(SECRET.as_bytes()))
+                .unwrap();
+            Utf8StrBuilder::new(root(&mut wb), &TLVTag::Context(4))
+                .set(SECRET)
+                .unwrap();
+            ToTLVBuilder::<_, Octets>::new(root(&mut wb), &TLVTag::Context(5))
+                .set(&Octets(SECRET.as_bytes()))
+                .unwrap();
+            ToTLVArrayBuilder::<_, Octets>::new(root(&mut wb), &TLVTag::Context(6))
+                .unwrap()
+                .push(&Octets(SECRET.as_bytes()))
+                .unwrap()
+                .end()
+                .unwrap();
+        });
+
+        assert!(logs
+            .iter()
+            .any(|message| message.contains("test-log-capture-canary")));
+        assert!(!logs.iter().any(|message| message.contains(SECRET)));
+        assert!(!logs
+            .iter()
+            .any(|message| message.contains(&format!("{:?}", Octets(SECRET.as_bytes())))));
+        assert!(logs.iter().any(|message| message.contains("Octets")));
+        assert!(logs.iter().any(|message| message.contains("Utf8")));
+        assert!(logs.iter().any(|message| message.contains("TLV[]")));
     }
 }
