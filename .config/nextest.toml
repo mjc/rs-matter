@@ -1,0 +1,8 @@
+[profile.default]
+
+[[profile.default.overrides]]
+filter = 'binary(binding) | binary(commissioning)'
+test-group = 'matter-fixed-port'
+
+[test-groups.matter-fixed-port]
+max-threads = 1
