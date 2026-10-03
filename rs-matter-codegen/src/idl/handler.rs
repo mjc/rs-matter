@@ -866,9 +866,9 @@ fn handler_adaptor_attribute_match(
 
     let attr_read_debug = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
+        #krate::reexport::defmt::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
         #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
+        #krate::reexport::log::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
     );
 
     if builder {
@@ -965,9 +965,9 @@ fn handler_adaptor_attribute_write_match(
 
     let attr_write_debug = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
+        #krate::reexport::defmt::debug!("{:?} -> {:?}", #attr_debug_id, attr_write_result.as_ref().map(|_| ()));
         #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
+        #krate::reexport::log::debug!("{:?} -> {:?}", #attr_debug_id, attr_write_result.as_ref().map(|_| ()));
     );
 
     if attr.field.field.data_type.is_list {
@@ -1021,9 +1021,9 @@ fn handler_adaptor_command_match(
 
     let cmd_invoke_debug_build_start = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
+        #krate::reexport::defmt::debug!("{:?} -> (build) +", #cmd_debug_id);
         #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
+        #krate::reexport::log::debug!("{:?} -> (build) +", #cmd_debug_id);
     );
 
     let cmd_invoke_debug_noarg_build_start = quote!(
@@ -1042,16 +1042,16 @@ fn handler_adaptor_command_match(
 
     let cmd_invoke_debug = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
+        #krate::reexport::defmt::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
         #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
+        #krate::reexport::log::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
     );
 
     let cmd_invoke_debug_noarg = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
+        #krate::reexport::defmt::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
         #[cfg(feature = "log")]
-        #krate::reexport::log::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
+        #krate::reexport::log::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
     );
 
     let field_req = cmd.input.as_ref().map(|id| {
@@ -1543,10 +1543,31 @@ mod tests {
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
+        let generated = handler_adaptor(false, cluster, &idl.globals, &context);
+        let diagnostics = crate::idl::tests::debug_macro_arguments(generated.clone());
+        assert!(!diagnostics.is_empty());
+        for arguments in &diagnostics {
+            let arguments = arguments.to_string();
+            assert!(!arguments.contains("cmd_data"));
+            assert!(!arguments.contains("attr_data"));
+            for result in ["cmd_invoke_result", "attr_read_result", "attr_write_result"] {
+                if arguments.contains(result) {
+                    assert!(arguments.contains("as_ref"));
+                    assert!(arguments.contains("map"));
+                }
+            }
+        }
+        assert!(diagnostics
+            .iter()
+            .any(|arguments| arguments.to_string().contains("CommandId")));
+        assert!(diagnostics
+            .iter()
+            .any(|arguments| arguments.to_string().contains("AttributeId")));
+
         // panic!("====\n{}\n====", &handler_adaptor(false, cluster, &context));
 
         assert_tokenstreams_eq!(
-            &handler_adaptor(false, cluster, &idl.globals, &context),
+            &generated,
             &quote!(
                 #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
                 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -1579,7 +1600,7 @@ mod tests {
                                                 self,
                                                 MetadataDebug((AttributeId::OnOff, false))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         #[cfg(feature = "log")]
                                         rs_matter_crate::reexport::log::debug!(
@@ -1589,7 +1610,7 @@ mod tests {
                                                 self,
                                                 MetadataDebug((AttributeId::OnOff, false))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
@@ -1606,7 +1627,7 @@ mod tests {
                                                     false
                                                 ))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         #[cfg(feature = "log")]
                                         rs_matter_crate::reexport::log::debug!(
@@ -1619,7 +1640,7 @@ mod tests {
                                                     false
                                                 ))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
@@ -1633,7 +1654,7 @@ mod tests {
                                                 self,
                                                 MetadataDebug((AttributeId::OnTime, false))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         #[cfg(feature = "log")]
                                         rs_matter_crate::reexport::log::debug!(
@@ -1643,7 +1664,7 @@ mod tests {
                                                 self,
                                                 MetadataDebug((AttributeId::OnTime, false))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
@@ -1657,7 +1678,7 @@ mod tests {
                                                 self,
                                                 MetadataDebug((AttributeId::OffWaitTime, false))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         #[cfg(feature = "log")]
                                         rs_matter_crate::reexport::log::debug!(
@@ -1667,7 +1688,7 @@ mod tests {
                                                 self,
                                                 MetadataDebug((AttributeId::OffWaitTime, false))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
@@ -1681,7 +1702,7 @@ mod tests {
                                                 self,
                                                 MetadataDebug((AttributeId::StartUpOnOff, false))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         #[cfg(feature = "log")]
                                         rs_matter_crate::reexport::log::debug!(
@@ -1691,7 +1712,7 @@ mod tests {
                                                 self,
                                                 MetadataDebug((AttributeId::StartUpOnOff, false))
                                             )),
-                                            attr_read_result
+                                            attr_read_result.as_ref().map(|_| ())
                                         );
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
@@ -1732,25 +1753,23 @@ mod tests {
                                 let attr_write_result = self.0.set_on_time(&ctx, attr_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
                                         MetadataDebug((AttributeId::OnTime, false))
                                     )),
-                                    attr_data,
-                                    attr_write_result
+                                    attr_write_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
                                         MetadataDebug((AttributeId::OnTime, false))
                                     )),
-                                    attr_data,
-                                    attr_write_result
+                                    attr_write_result.as_ref().map(|_| ())
                                 );
                                 attr_write_result?;
                             }
@@ -1761,25 +1780,23 @@ mod tests {
                                     self.0.set_off_wait_time(&ctx, attr_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
                                         MetadataDebug((AttributeId::OffWaitTime, false))
                                     )),
-                                    attr_data,
-                                    attr_write_result
+                                    attr_write_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
                                         MetadataDebug((AttributeId::OffWaitTime, false))
                                     )),
-                                    attr_data,
-                                    attr_write_result
+                                    attr_write_result.as_ref().map(|_| ())
                                 );
                                 attr_write_result?;
                             }
@@ -1790,25 +1807,23 @@ mod tests {
                                     self.0.set_start_up_on_off(&ctx, attr_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
                                         MetadataDebug((AttributeId::StartUpOnOff, false))
                                     )),
-                                    attr_data,
-                                    attr_write_result
+                                    attr_write_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.attr().endpoint_id,
                                         self,
                                         MetadataDebug((AttributeId::StartUpOnOff, false))
                                     )),
-                                    attr_data,
-                                    attr_write_result
+                                    attr_write_result.as_ref().map(|_| ())
                                 );
                                 attr_write_result?;
                             }
@@ -1847,7 +1862,7 @@ mod tests {
                                         self,
                                         MetadataDebug(CommandId::Off)
                                     )),
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
@@ -1857,7 +1872,7 @@ mod tests {
                                         self,
                                         MetadataDebug(CommandId::Off)
                                     )),
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 cmd_invoke_result?;
                             }
@@ -1871,7 +1886,7 @@ mod tests {
                                         self,
                                         MetadataDebug(CommandId::On)
                                     )),
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
@@ -1881,7 +1896,7 @@ mod tests {
                                         self,
                                         MetadataDebug(CommandId::On)
                                     )),
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 cmd_invoke_result?;
                             }
@@ -1895,7 +1910,7 @@ mod tests {
                                         self,
                                         MetadataDebug(CommandId::Toggle)
                                     )),
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
@@ -1905,7 +1920,7 @@ mod tests {
                                         self,
                                         MetadataDebug(CommandId::Toggle)
                                     )),
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 cmd_invoke_result?;
                             }
@@ -1916,25 +1931,23 @@ mod tests {
                                     self.0.handle_off_with_effect(&ctx, cmd_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
                                         MetadataDebug(CommandId::OffWithEffect)
                                     )),
-                                    cmd_data,
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
                                         MetadataDebug(CommandId::OffWithEffect)
                                     )),
-                                    cmd_data,
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 cmd_invoke_result?;
                             }
@@ -1949,7 +1962,7 @@ mod tests {
                                         self,
                                         MetadataDebug(CommandId::OnWithRecallGlobalScene)
                                     )),
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
@@ -1959,7 +1972,7 @@ mod tests {
                                         self,
                                         MetadataDebug(CommandId::OnWithRecallGlobalScene)
                                     )),
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 cmd_invoke_result?;
                             }
@@ -1970,25 +1983,23 @@ mod tests {
                                     self.0.handle_on_with_timed_off(&ctx, cmd_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
                                         MetadataDebug(CommandId::OnWithTimedOff)
                                     )),
-                                    cmd_data,
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 #[cfg(feature = "log")]
                                 rs_matter_crate::reexport::log::debug!(
-                                    "{:?}({:?}) -> {:?}",
+                                    "{:?} -> {:?}",
                                     MetadataDebug((
                                         ctx.cmd().endpoint_id,
                                         self,
                                         MetadataDebug(CommandId::OnWithTimedOff)
                                     )),
-                                    cmd_data,
-                                    cmd_invoke_result
+                                    cmd_invoke_result.as_ref().map(|_| ())
                                 );
                                 cmd_invoke_result?;
                             }

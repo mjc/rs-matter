@@ -302,9 +302,9 @@ fn struct_field_builder(
                 #doc_comment
                 pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
                     #[cfg(feature = "defmt")]
-                    #krate::reexport::defmt::debug!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::defmt::debug!("{:?}::{} +", self, #name_str);
                     #[cfg(feature = "log")]
-                    #krate::reexport::log::debug!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::log::debug!("{:?}::{} +", self, #name_str);
 
                     #krate::tlv::TLVWrite::write_ctx(self.0.writer(), #code, &value)?;
 
@@ -320,7 +320,7 @@ fn struct_field_builder(
                 #doc_comment
                 pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
                     #[cfg(feature = "log")]
-                    #krate::reexport::log::debug!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::log::debug!("{:?}::{} +", self, #name_str);
 
                     #krate::tlv::TLVWrite::write_ctx(self.0.writer(), #code, &value)?;
 
@@ -334,10 +334,11 @@ fn struct_field_builder(
 #[cfg(test)]
 mod tests {
     use crate::idl::parser::EntityContext;
+    use crate::idl::tests::debug_macro_arguments;
     use crate::idl::tests::{get_cluster_named, parse_idl};
     use crate::idl::IdlGenerateContext;
-
     use assert_tokenstreams_eq::assert_tokenstreams_eq;
+
     use quote::quote;
 
     use super::struct_builders;
@@ -388,14 +389,23 @@ mod tests {
         let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
+        let generated = struct_builders(
+            &cluster.entities.structs,
+            &EntityContext::new(Some(cluster), &idl.globals),
+            &context,
+        );
+        let diagnostics = debug_macro_arguments(generated.clone());
+        assert!(diagnostics
+            .iter()
+            .all(|arguments| !arguments.to_string().contains("value")));
+        assert!(diagnostics
+            .iter()
+            .any(|arguments| arguments.to_string().contains("test_optional")));
+
         // panic!("====\n{}\n====", &struct_builders(&EntityContext::new(Some(cluster), &idl.globals), &context));
 
         assert_tokenstreams_eq!(
-            &struct_builders(
-                &cluster.entities.structs,
-                &EntityContext::new(Some(cluster), &idl.globals),
-                &context
-            ),
+            &generated,
             &quote!(
                 pub struct NetworkInfoStructBuilder<P, const F: usize = 1usize>(P);
                 impl<P> NetworkInfoStructBuilder<P>
@@ -425,19 +435,9 @@ mod tests {
                     ) -> Result<NetworkInfoStructBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "connected",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "connected");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "connected",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "connected");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
@@ -453,12 +453,7 @@ mod tests {
                     ) -> Result<NetworkInfoStructBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "connected",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "connected");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
@@ -477,18 +472,12 @@ mod tests {
                     {
                         #[cfg(feature = "defmt")]
                         rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "test_optional",
-                            value
+                            "test_optional"
                         );
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "test_optional",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "test_optional");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
@@ -504,12 +493,7 @@ mod tests {
                     ) -> Result<NetworkInfoStructBuilder<P, 3usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "test_optional",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "test_optional");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
@@ -528,18 +512,12 @@ mod tests {
                     {
                         #[cfg(feature = "defmt")]
                         rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "test_nullable",
-                            value
+                            "test_nullable"
                         );
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "test_nullable",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "test_nullable");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
@@ -555,12 +533,7 @@ mod tests {
                     ) -> Result<NetworkInfoStructBuilder<P, 4usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "test_nullable",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "test_nullable");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
@@ -578,19 +551,9 @@ mod tests {
                     ) -> Result<NetworkInfoStructBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "test_both",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "test_both");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "test_both",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "test_both");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
@@ -606,12 +569,7 @@ mod tests {
                     ) -> Result<NetworkInfoStructBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "test_both",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "test_both");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
@@ -779,18 +737,12 @@ mod tests {
                     {
                         #[cfg(feature = "defmt")]
                         rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "identifyTime",
-                            value
+                            "identifyTime"
                         );
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "identifyTime",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "identifyTime");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(IdentifyRequestBuilder(self.0))
                     }
@@ -806,12 +758,7 @@ mod tests {
                     ) -> Result<IdentifyRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "identifyTime",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "identifyTime");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(IdentifyRequestBuilder(self.0))
                     }
@@ -978,19 +925,9 @@ mod tests {
                     ) -> Result<SomeRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "group",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "group");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "group",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "group");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(SomeRequestBuilder(self.0))
                     }
@@ -1006,12 +943,7 @@ mod tests {
                     ) -> Result<SomeRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "group",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "group");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(SomeRequestBuilder(self.0))
                     }
@@ -1178,19 +1110,9 @@ mod tests {
                     ) -> Result<TestResponseBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "capacity",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "capacity");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "capacity",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "capacity");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(TestResponseBuilder(self.0))
                     }
@@ -1206,12 +1128,7 @@ mod tests {
                     ) -> Result<TestResponseBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "capacity",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "capacity");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(TestResponseBuilder(self.0))
                     }
@@ -1378,19 +1295,9 @@ mod tests {
                     ) -> Result<AnotherResponseBuilder<P, 12usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "status",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "status");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "status",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "status");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(AnotherResponseBuilder(self.0))
                     }
@@ -1406,12 +1313,7 @@ mod tests {
                     ) -> Result<AnotherResponseBuilder<P, 12usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "status",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "status");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(AnotherResponseBuilder(self.0))
                     }
@@ -1429,19 +1331,9 @@ mod tests {
                     ) -> Result<AnotherResponseBuilder<P, 13usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "groupID",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "groupID");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "groupID",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "groupID");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 12, &value)?;
                         Ok(AnotherResponseBuilder(self.0))
                     }
@@ -1457,12 +1349,7 @@ mod tests {
                     ) -> Result<AnotherResponseBuilder<P, 13usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "groupID",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "groupID");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 12, &value)?;
                         Ok(AnotherResponseBuilder(self.0))
                     }
@@ -1667,17 +1554,15 @@ mod tests {
                     {
                         #[cfg(feature = "defmt")]
                         rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "effectIdentifier",
-                            value
+                            "effectIdentifier"
                         );
                         #[cfg(feature = "log")]
                         rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "effectIdentifier",
-                            value
+                            "effectIdentifier"
                         );
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(OffWithEffectRequestBuilder(self.0))
@@ -1695,10 +1580,9 @@ mod tests {
                     {
                         #[cfg(feature = "log")]
                         rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "effectIdentifier",
-                            value
+                            "effectIdentifier"
                         );
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(OffWithEffectRequestBuilder(self.0))
@@ -1718,18 +1602,12 @@ mod tests {
                     {
                         #[cfg(feature = "defmt")]
                         rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "effectVariant",
-                            value
+                            "effectVariant"
                         );
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "effectVariant",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "effectVariant");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(OffWithEffectRequestBuilder(self.0))
                     }
@@ -1745,12 +1623,7 @@ mod tests {
                     ) -> Result<OffWithEffectRequestBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "effectVariant",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "effectVariant");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(OffWithEffectRequestBuilder(self.0))
                     }
@@ -1921,18 +1794,12 @@ mod tests {
                     > {
                         #[cfg(feature = "defmt")]
                         rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "onOffControl",
-                            value
+                            "onOffControl"
                         );
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "onOffControl",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "onOffControl");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
@@ -1950,12 +1817,7 @@ mod tests {
                         rs_matter_crate::error::Error,
                     > {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "onOffControl",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "onOffControl");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 0, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
@@ -1975,19 +1837,9 @@ mod tests {
                         rs_matter_crate::error::Error,
                     > {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "onTime",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "onTime");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "onTime",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "onTime");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
@@ -2005,12 +1857,7 @@ mod tests {
                         rs_matter_crate::error::Error,
                     > {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "onTime",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "onTime");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
@@ -2030,19 +1877,9 @@ mod tests {
                         rs_matter_crate::error::Error,
                     > {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "offWaitTime",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "offWaitTime");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "offWaitTime",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "offWaitTime");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
@@ -2060,12 +1897,7 @@ mod tests {
                         rs_matter_crate::error::Error,
                     > {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "offWaitTime",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "offWaitTime");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
@@ -2266,18 +2098,12 @@ mod tests {
                     {
                         #[cfg(feature = "defmt")]
                         rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "short_string",
-                            value
+                            "short_string"
                         );
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "short_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "short_string");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2293,12 +2119,7 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "short_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "short_string");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2316,19 +2137,9 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 3usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "long_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "long_string");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "long_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "long_string");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2344,12 +2155,7 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 3usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "long_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "long_string");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2367,19 +2173,9 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 4usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "opt_str");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "opt_str");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2395,12 +2191,7 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 4usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "opt_str");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2420,19 +2211,9 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_nul_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "opt_nul_str");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_nul_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "opt_nul_str");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2450,12 +2231,7 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_nul_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "opt_nul_str");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2654,18 +2430,12 @@ mod tests {
                     {
                         #[cfg(feature = "defmt")]
                         rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
+                            "{:?}::{} +",
                             self,
-                            "short_string",
-                            value
+                            "short_string"
                         );
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "short_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "short_string");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2681,12 +2451,7 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "short_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "short_string");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 1, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2704,19 +2469,9 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 3usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "long_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "long_string");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "long_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "long_string");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2732,12 +2487,7 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 3usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "long_string",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "long_string");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 2, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2755,19 +2505,9 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 4usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "opt_str");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "opt_str");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2783,12 +2523,7 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 4usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "opt_str");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 3, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2808,19 +2543,9 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "defmt")]
-                        rs_matter_crate::reexport::defmt::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_nul_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::defmt::debug!("{:?}::{} +", self, "opt_nul_str");
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_nul_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "opt_nul_str");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
@@ -2838,12 +2563,7 @@ mod tests {
                     ) -> Result<WithStringMemberBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
                         #[cfg(feature = "log")]
-                        rs_matter_crate::reexport::log::debug!(
-                            "{:?}::{} -> {:?} +",
-                            self,
-                            "opt_nul_str",
-                            value
-                        );
+                        rs_matter_crate::reexport::log::debug!("{:?}::{} +", self, "opt_nul_str");
                         rs_matter_crate::tlv::TLVWrite::write_ctx(self.0.writer(), 4, &value)?;
                         Ok(WithStringMemberBuilder(self.0))
                     }
