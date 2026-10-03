@@ -43,6 +43,7 @@ use crate::sc::pase::PaseInitiator;
 #[cfg(not(feature = "case-responder-only"))]
 use crate::sc::SessionParameters;
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
+#[cfg(any(feature = "log-tlv-payload", test))]
 use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
     commissionable_instance_id, merge_resolve_candidate, score_ip_address,
@@ -2631,7 +2632,7 @@ impl<const N: usize> Packet<N> {
         PacketInfo(peer, header)
     }
 
-    #[cfg(feature = "defmt")]
+    #[cfg(all(feature = "defmt", any(feature = "log-tlv-payload", test)))]
     pub fn display_payload<'a>(
         proto: &'a ProtoHdr,
         buf: &'a [u8],
@@ -2639,7 +2640,7 @@ impl<const N: usize> Packet<N> {
         DetailedPacketInfo(proto, buf)
     }
 
-    #[cfg(not(feature = "defmt"))]
+    #[cfg(all(not(feature = "defmt"), any(feature = "log-tlv-payload", test)))]
     pub fn display_payload<'a>(proto: &'a ProtoHdr, buf: &'a [u8]) -> impl Display + 'a {
         DetailedPacketInfo(proto, buf)
     }
@@ -2667,6 +2668,7 @@ impl<const N: usize> Packet<N> {
         }
     }
 
+    #[cfg(any(feature = "log-tlv-payload", test))]
     fn fmt_payload(f: &mut fmt::Formatter<'_>, proto: &ProtoHdr, buf: &[u8]) -> fmt::Result {
         let meta = MessageMeta::from(proto);
 
@@ -2689,7 +2691,7 @@ impl<const N: usize> Packet<N> {
         Ok(())
     }
 
-    #[cfg(feature = "defmt")]
+    #[cfg(all(feature = "defmt", any(feature = "log-tlv-payload", test)))]
     fn format_payload(f: defmt::Formatter<'_>, proto: &ProtoHdr, buf: &[u8]) {
         let meta = MessageMeta::from(proto);
 
@@ -2739,15 +2741,17 @@ impl defmt::Format for PacketInfo<'_> {
     }
 }
 
+#[cfg(any(feature = "log-tlv-payload", test))]
 struct DetailedPacketInfo<'a>(&'a ProtoHdr, &'a [u8]);
 
+#[cfg(any(feature = "log-tlv-payload", test))]
 impl Display for DetailedPacketInfo<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Packet::<0>::fmt_payload(f, self.0, self.1)
     }
 }
 
-#[cfg(feature = "defmt")]
+#[cfg(all(feature = "defmt", any(feature = "log-tlv-payload", test)))]
 impl defmt::Format for DetailedPacketInfo<'_> {
     fn format(&self, f: defmt::Formatter<'_>) {
         Packet::<0>::format_payload(f, self.0, self.1)

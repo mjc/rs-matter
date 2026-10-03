@@ -616,6 +616,7 @@ impl MessageMeta {
     }
 
     /// Utility method to check if the specific proto opcode in the instance is expecting a TLV payload.
+    #[cfg(any(feature = "log-tlv-payload", test))]
     pub(crate) fn is_tlv(&self) -> bool {
         match self.proto_id {
             PROTO_ID_SECURE_CHANNEL => self
