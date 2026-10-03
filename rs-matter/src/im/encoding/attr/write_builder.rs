@@ -125,7 +125,7 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite};
 /// In practice almost every call is `WriteReqBuilder::new(p)?
 /// .write_requests()? … .end()?` — `SuppressResponse` and
 /// `MoreChunkedMessages` default to absent (= false on the wire),
-/// `TimedRequest` is only set when issuing a timed write.
+/// `TimedRequest` is always emitted, defaulting to `false` for an untimed write.
 pub struct WriteReqBuilder<P, const F: usize = 0> {
     p: P,
 }
@@ -208,9 +208,9 @@ where
     P: TLVBuilderParent,
 {
     /// Open the `WriteRequests` array. Calling from state 0
-    /// implicitly skips both `SuppressResponse` and `TimedRequest`.
+    /// implicitly skips `SuppressResponse` and emits `TimedRequest=false`.
     pub fn write_requests(self) -> Result<AttrDataArrayBuilder<WriteReqBuilder<P, 3>>, Error> {
-        WriteReqBuilder::<P, 2> { p: self.p }.write_requests()
+        self.timed_request(false)?.write_requests()
     }
 }
 
@@ -218,9 +218,9 @@ impl<P> WriteReqBuilder<P, 1>
 where
     P: TLVBuilderParent,
 {
-    /// Open the `WriteRequests` array, implicitly skipping `TimedRequest`.
+    /// Open the `WriteRequests` array, emitting `TimedRequest=false`.
     pub fn write_requests(self) -> Result<AttrDataArrayBuilder<WriteReqBuilder<P, 3>>, Error> {
-        WriteReqBuilder::<P, 2> { p: self.p }.write_requests()
+        self.timed_request(false)?.write_requests()
     }
 }
 
@@ -730,6 +730,9 @@ mod tests {
             wb.as_slice(),
             &[
                 0x15, // WriteRequestMessage
+                0x28,
+                1,
+                // TimedRequest=false (mandatory)
                 0x36,
                 2,    // WriteRequests[]
                 0x15, // AttrData
@@ -894,12 +897,16 @@ mod tests {
         let req = WriteReq::new(TLVElement::new(wb.as_slice()));
         assert!(!req.supress_response().unwrap());
         assert!(!req.timed_request().unwrap());
-        assert!(TLVElement::new(wb.as_slice())
-            .structure()
-            .unwrap()
-            .find_ctx(1)
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            TLVElement::new(wb.as_slice())
+                .structure()
+                .unwrap()
+                .find_ctx(1)
+                .unwrap()
+                .bool()
+                .unwrap(),
+            false
+        );
     }
 
     /// Pushes one `(1, 6, attr) = 0xDEAD_BEEF` entry into the open array.
