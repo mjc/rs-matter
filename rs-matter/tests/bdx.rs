@@ -280,10 +280,27 @@ async fn ota_download_window(
     assert!(accept.range_control.def_len);
     let expected_len = expected_len.unwrap();
     assert_eq!(accept.length, expected_len);
+    let block_size = usize::from(accept.max_block_size);
+    let expected_len_usize = usize::try_from(expected_len).unwrap();
+    let expected_frames = (expected_len_usize + block_size - 1)
+        .checked_div(block_size)
+        .unwrap()
+        .max(1);
+    let expected_final_len = if expected_len_usize == 0 {
+        0
+    } else {
+        let remainder = expected_len_usize % block_size;
+        if remainder == 0 {
+            block_size
+        } else {
+            remainder
+        }
+    };
     exchange.rx_done()?;
 
     let mut received = Vec::new();
     let mut expected_counter = 0;
+    let mut frame_index = 0;
     loop {
         exchange.recv_fetch().await?;
         let meta = exchange.rx()?.meta();
@@ -292,6 +309,18 @@ async fn ota_download_window(
         received.extend_from_slice(block.data);
         let eof = meta.proto_opcode == bdx::OpCode::BlockEof as u8;
         assert!(eof || meta.proto_opcode == bdx::OpCode::Block as u8);
+        let is_final = frame_index + 1 == expected_frames;
+        assert_eq!(eof, is_final, "unexpected BDX EOF position");
+        let expected_block_len = if is_final {
+            expected_final_len
+        } else {
+            block_size
+        };
+        assert_eq!(
+            block.data.len(),
+            expected_block_len,
+            "unexpected data length in BDX frame {frame_index}"
+        );
         let counter = block.block_counter;
         exchange.rx_done()?;
         exchange
@@ -311,6 +340,7 @@ async fn ota_download_window(
             break;
         }
         expected_counter = expected_counter.wrapping_add(1);
+        frame_index += 1;
     }
     exchange.acknowledge().await?;
     let end = usize::try_from(offset).unwrap() + usize::try_from(expected_len).unwrap();
@@ -336,6 +366,16 @@ fn test_ota_bdx_definite_length_windows() {
                 Some(321),
             )
             .await?;
+            for window_len in [1, 255, 256, 257, 512] {
+                ota_download_window(
+                    runner.initiate_exchange().await?,
+                    &image,
+                    100,
+                    window_len,
+                    Some(window_len),
+                )
+                .await?;
+            }
             ota_download_window(
                 runner.initiate_exchange().await?,
                 &image,

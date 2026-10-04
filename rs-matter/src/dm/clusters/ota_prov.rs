@@ -591,10 +591,14 @@ where
                 break;
             }
 
-            writer.commit(n).await?;
-
             offset += n as u64;
             window_remaining -= n as u64;
+
+            if window_remaining == 0 {
+                return writer.finish_with_len(n).await;
+            }
+
+            writer.commit(n).await?;
         }
 
         writer.finish().await

@@ -164,6 +164,18 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         self.exchange.acknowledge().await
     }
 
+    /// Send `len` bytes from [`block_buf`](Self::block_buf) as the final
+    /// `BlockEof` and complete the transfer. `len` must not exceed
+    /// [`max_block_size`](Self::max_block_size).
+    pub async fn finish_with_len(mut self, len: usize) -> Result<(), Error> {
+        if self.cancelled || len > self.max_block_size {
+            return Err(ErrorCode::Invalid.into());
+        }
+
+        self.block_len = len;
+        self.finish().await
+    }
+
     /// Send the staged bytes as one block, driving/awaiting acknowledgement per
     /// the negotiated drive mode.
     async fn send_block(&mut self, is_eof: bool) -> Result<(), Error> {
