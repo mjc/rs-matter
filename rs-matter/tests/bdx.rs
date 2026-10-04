@@ -181,11 +181,12 @@ struct FlushDownloadResponder {
     image: Vec<u8>,
 }
 
-struct CommitDownloadResponder {
+struct CommitDownloadResponder<'a> {
     image: Vec<u8>,
+    finished: &'a AtomicBool,
 }
 
-impl ExchangeHandler for CommitDownloadResponder {
+impl ExchangeHandler for CommitDownloadResponder<'_> {
     async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
         let responder = BdxDownloadResponder::accept(exchange).await?;
         let mut buf = [0; 256];
@@ -193,16 +194,22 @@ impl ExchangeHandler for CommitDownloadResponder {
             .reply(&mut buf, TransferExtent::Definite(self.image.len() as u64))
             .await?;
         writer.block_buf()?[..self.image.len()].copy_from_slice(&self.image);
+        assert!(writer.commit(self.image.len() - 1).await.is_err());
         writer.commit(self.image.len()).await?;
-        writer.finish().await
+        writer.finish().await?;
+        writer.finish().await?;
+        embedded_io_async::Write::flush(&mut writer).await?;
+        self.finished.store(true, Ordering::Release);
+        Ok(())
     }
 }
 
-struct RecoverExtentDownloadResponder {
+struct RecoverExtentDownloadResponder<'a> {
     image: Vec<u8>,
+    finished: &'a AtomicBool,
 }
 
-impl ExchangeHandler for RecoverExtentDownloadResponder {
+impl ExchangeHandler for RecoverExtentDownloadResponder<'_> {
     async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
         let responder = BdxDownloadResponder::accept(exchange).await?;
         let mut buf = [0; 256];
@@ -210,6 +217,7 @@ impl ExchangeHandler for RecoverExtentDownloadResponder {
             .reply(&mut buf, TransferExtent::Definite(self.image.len() as u64))
             .await?;
         write_all(&mut writer, &self.image[..3]).await?;
+        assert!(embedded_io_async::Write::flush(&mut writer).await.is_err());
         assert!(
             writer.finish().await.is_err(),
             "undershoot must not send EOF"
@@ -219,7 +227,9 @@ impl ExchangeHandler for RecoverExtentDownloadResponder {
             writer.write(b"x").await.is_err(),
             "overshoot must be rejected"
         );
-        writer.finish().await
+        writer.finish().await?;
+        self.finished.store(true, Ordering::Release);
+        Ok(())
     }
 }
 
@@ -237,6 +247,30 @@ impl ExchangeHandler for MixedWriteCommitDownloadResponder {
         assert!(writer.commit(2).await.is_err());
         assert_eq!(writer.write(b"cd").await?, 2);
         writer.finish().await
+    }
+}
+
+struct FlushSequenceDownloadResponder<'a> {
+    image: Vec<u8>,
+    finished: &'a AtomicBool,
+}
+
+impl ExchangeHandler for FlushSequenceDownloadResponder<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(self.image.len() as u64))
+            .await?;
+        write_all(&mut writer, &self.image[..256]).await?;
+        embedded_io_async::Write::flush(&mut writer).await?;
+        write_all(&mut writer, &self.image[256..]).await?;
+        embedded_io_async::Write::flush(&mut writer).await?;
+        writer.finish().await?;
+        writer.finish().await?;
+        embedded_io_async::Write::flush(&mut writer).await?;
+        self.finished.store(true, Ordering::Release);
+        Ok(())
     }
 }
 
@@ -329,6 +363,22 @@ async fn receive_writer_frames(mut exchange: Exchange<'_>, image: &[u8]) -> Resu
     Ok(())
 }
 
+async fn wait_for_flag(flag: &AtomicBool) -> Result<(), Error> {
+    with_timeout(async {
+        core::future::poll_fn(|cx| {
+            if flag.load(Ordering::Acquire) {
+                Poll::Ready(())
+            } else {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        })
+        .await;
+        Ok(())
+    })
+    .await
+}
+
 #[test]
 fn test_bdx_writer_finishes_full_blocks_with_data_eof() {
     init_env_logger();
@@ -399,12 +449,15 @@ fn test_bdx_writer_commit_uses_declared_extent_for_final_eof() {
     futures_lite::future::block_on(async {
         let runner = new_default_runner();
         let image = image_of(17);
+        let finished = AtomicBool::new(false);
         select(
             runner.run_responder(CommitDownloadResponder {
                 image: image.clone(),
+                finished: &finished,
             }),
             async {
                 receive_writer_frames(runner.initiate_exchange().await?, &image).await?;
+                wait_for_flag(&finished).await?;
                 Ok::<_, Error>(())
             },
         )
@@ -421,12 +474,40 @@ fn test_bdx_writer_extent_rejection_preserves_staged_data() {
     futures_lite::future::block_on(async {
         let runner = new_default_runner();
         let image = image_of(5);
+        let finished = AtomicBool::new(false);
         select(
             runner.run_responder(RecoverExtentDownloadResponder {
                 image: image.clone(),
+                finished: &finished,
             }),
             async {
                 receive_writer_frames(runner.initiate_exchange().await?, &image).await?;
+                wait_for_flag(&finished).await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn test_bdx_writer_flushes_nonfinal_then_final_full_block() {
+    init_env_logger();
+
+    futures_lite::future::block_on(async {
+        let runner = new_default_runner();
+        let image = image_of(512);
+        let finished = AtomicBool::new(false);
+        select(
+            runner.run_responder(FlushSequenceDownloadResponder {
+                image: image.clone(),
+                finished: &finished,
+            }),
+            async {
+                receive_writer_frames(runner.initiate_exchange().await?, &image).await?;
+                wait_for_flag(&finished).await?;
                 Ok::<_, Error>(())
             },
         )
