@@ -557,6 +557,10 @@ where
             return responder.reject(BdxStatus::StartOffsetNotSupported).await;
         }
         let remaining = size - start_offset;
+        let window_len = responder
+            .requested_length()
+            .unwrap_or(remaining)
+            .min(remaining);
 
         // Lease a staging buffer for the duration of this transfer; if the pool is
         // exhausted, tell the peer we are busy so it can retry later.
@@ -570,12 +574,19 @@ where
 
         // Hand it to the writer, which sends each block straight out of it - the
         // image bytes are read directly into the writer's block buffer, no copy.
-        let mut writer = responder.reply(buf.as_mut_slice(), Some(remaining)).await?;
+        let mut writer = responder
+            .reply(buf.as_mut_slice(), Some(window_len))
+            .await?;
 
         let mut offset = start_offset;
+        let mut window_remaining = window_len;
 
-        loop {
-            let n = self.fill(&fd, offset, writer.block_buf()).await?;
+        while window_remaining > 0 {
+            let block_buf = writer.block_buf();
+            let max_read = usize::try_from(window_remaining)
+                .unwrap_or(usize::MAX)
+                .min(block_buf.len());
+            let n = self.fill(&fd, offset, &mut block_buf[..max_read]).await?;
             if n == 0 {
                 break;
             }
@@ -583,6 +594,7 @@ where
             writer.commit(n).await?;
 
             offset += n as u64;
+            window_remaining -= n as u64;
         }
 
         writer.finish().await

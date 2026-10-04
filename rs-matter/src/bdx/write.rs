@@ -337,13 +337,14 @@ pub struct BdxDownloadResponder<'a> {
     transfer_control: TransferControl,
     max_block_size: u16,
     start_offset: u64,
+    requested_length: Option<u64>,
 }
 
 impl<'a> BdxDownloadResponder<'a> {
     /// Receive the incoming `ReceiveInit` on `exchange`, holding it until
     /// [`reply`](Self::reply)/[`reject`](Self::reject).
     pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
-        let (transfer_control, max_block_size, _length, start_offset) =
+        let (transfer_control, max_block_size, requested_length, start_offset) =
             recv_init_hold(&mut exchange, OpCode::ReceiveInit).await?;
 
         Ok(Self {
@@ -351,6 +352,7 @@ impl<'a> BdxDownloadResponder<'a> {
             transfer_control,
             max_block_size,
             start_offset,
+            requested_length,
         })
     }
 
@@ -366,6 +368,14 @@ impl<'a> BdxDownloadResponder<'a> {
     /// if the offset cannot be honored.
     pub fn start_offset(&self) -> u64 {
         self.start_offset
+    }
+
+    /// The definite transfer length requested by the initiator, if any.
+    ///
+    /// A missing length or a requested length of zero represents an
+    /// indefinite-length transfer.
+    pub fn requested_length(&self) -> Option<u64> {
+        self.requested_length
     }
 
     /// Accept the transfer and start sending, staging blocks in the (non-empty)

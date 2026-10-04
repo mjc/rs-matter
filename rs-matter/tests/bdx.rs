@@ -37,11 +37,13 @@ use rs_matter::bdx::{
     self, Bdx, BdxDownloadInitiator, BdxDownloadResponder, BdxHandler, BdxReader, BdxResponder,
     BdxUploadInitiator, BdxUploadResponder, BdxWriter, ChainedBdxHandler, EmptyBdxHandler,
 };
-use rs_matter::error::Error;
+use rs_matter::dm::clusters::ota_prov::{BdxBuffer, OtaBdxHandler, OtaImages};
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::respond::ExchangeHandler;
-use rs_matter::sc::{OpCode as ScOpCode, StatusReport};
+use rs_matter::sc::{GeneralCode, OpCode as ScOpCode, StatusReport};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::storage::ReadBuf;
 
 use crate::common::e2e::{new_default_runner, E2eLateBdxQueryRace};
@@ -188,6 +190,188 @@ fn test_bdx_download_with_offset() {
             assert_eq!(reader.len(), Some(image.len() as u64 - offset));
             let received = with_timeout(read_all(&mut reader)).await?;
             assert_eq!(&received, &image[offset as usize..]);
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+struct TestOtaImage(Vec<u8>);
+
+impl OtaImages for TestOtaImage {
+    async fn size(&self, fd: &[u8]) -> Option<u64> {
+        (fd == FILE_DESIGNATOR).then_some(self.0.len() as u64)
+    }
+
+    async fn read(&self, fd: &[u8], offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
+        if fd != FILE_DESIGNATOR {
+            return Err(ErrorCode::Invalid.into());
+        }
+        let offset = usize::try_from(offset).map_err(|_| ErrorCode::Invalid)?;
+        let Some(bytes) = self.0.get(offset..) else {
+            return Ok(0);
+        };
+        let n = bytes.len().min(buf.len());
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Ok(n)
+    }
+}
+
+/// Send a definite-length ReceiveInit directly because the public convenience
+/// download API currently proposes an indefinite transfer.
+async fn ota_download_window(
+    mut exchange: Exchange<'_>,
+    image: &[u8],
+    offset: u64,
+    requested: u64,
+    expected_len: Option<u64>,
+) -> Result<(), Error> {
+    let init = bdx::TransferInit {
+        transfer_control: bdx::TransferControl {
+            version: bdx::BDX_VERSION,
+            sender_drive: true,
+            receiver_drive: false,
+            async_mode: false,
+        },
+        range_control: bdx::RangeControl {
+            def_len: true,
+            start_offset: offset != 0,
+            wide_range: offset > u32::MAX as u64 || requested > u32::MAX as u64,
+        },
+        max_block_size: 256,
+        start_offset: offset,
+        length: requested,
+        file_designator: FILE_DESIGNATOR,
+        metadata: &[],
+    };
+    exchange
+        .send_with(|_, wb| {
+            init.write(wb)?;
+            Ok(Some(bdx::OpCode::ReceiveInit.into()))
+        })
+        .await?;
+
+    exchange.recv_fetch().await?;
+    if expected_len.is_none() {
+        assert_eq!(
+            exchange.rx()?.meta().proto_id,
+            rs_matter::sc::PROTO_ID_SECURE_CHANNEL
+        );
+        {
+            let mut rb = ReadBuf::new(exchange.rx()?.payload());
+            let status = StatusReport::read(&mut rb)?;
+            assert_eq!(status.general_code, GeneralCode::Failure);
+            assert_eq!(status.proto_id, bdx::PROTO_ID_BDX as u32);
+            assert_eq!(
+                status.proto_code,
+                bdx::BdxStatus::StartOffsetNotSupported as u16
+            );
+        }
+        exchange.rx_done()?;
+        return Ok(());
+    }
+    assert_eq!(
+        exchange.rx()?.meta().proto_opcode,
+        bdx::OpCode::ReceiveAccept as u8
+    );
+    let accept = bdx::TransferAccept::parse(true, exchange.rx()?.payload())?;
+    assert!(accept.range_control.def_len);
+    let expected_len = expected_len.unwrap();
+    assert_eq!(accept.length, expected_len);
+    exchange.rx_done()?;
+
+    let mut received = Vec::new();
+    let mut expected_counter = 0;
+    loop {
+        exchange.recv_fetch().await?;
+        let meta = exchange.rx()?.meta();
+        let block = bdx::Block::parse(exchange.rx()?.payload())?;
+        assert_eq!(block.block_counter, expected_counter);
+        received.extend_from_slice(block.data);
+        let eof = meta.proto_opcode == bdx::OpCode::BlockEof as u8;
+        assert!(eof || meta.proto_opcode == bdx::OpCode::Block as u8);
+        let counter = block.block_counter;
+        exchange.rx_done()?;
+        exchange
+            .send_with(|_, wb| {
+                bdx::BlockQuery {
+                    block_counter: counter,
+                }
+                .write(wb)?;
+                Ok(Some(if eof {
+                    bdx::OpCode::BlockAckEof.into()
+                } else {
+                    bdx::OpCode::BlockAck.into()
+                }))
+            })
+            .await?;
+        if eof {
+            break;
+        }
+        expected_counter = expected_counter.wrapping_add(1);
+    }
+    exchange.acknowledge().await?;
+    let end = usize::try_from(offset).unwrap() + usize::try_from(expected_len).unwrap();
+    assert_eq!(received, image[offset as usize..end]);
+    Ok(())
+}
+
+#[test]
+fn test_ota_bdx_definite_length_windows() {
+    init_env_logger();
+    let runner = new_default_runner();
+    let image = image_of(5000);
+    let buffers = PooledBuffers::<BdxBuffer, 1>::new();
+    let handler = Bdx::new(OtaBdxHandler::new(&buffers, TestOtaImage(image.clone())));
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(handler), async {
+            ota_download_window(
+                runner.initiate_exchange().await?,
+                &image,
+                123,
+                321,
+                Some(321),
+            )
+            .await?;
+            ota_download_window(
+                runner.initiate_exchange().await?,
+                &image,
+                4900,
+                500,
+                Some(100),
+            )
+            .await?;
+            // A zero DEFLEN means indefinite per Matter Core, so the provider
+            // serves the remaining image. An offset exactly at EOF has a true
+            // zero-byte window even with a positive requested length.
+            ota_download_window(
+                runner.initiate_exchange().await?,
+                &image,
+                200,
+                0,
+                Some(4800),
+            )
+            .await?;
+            ota_download_window(
+                runner.initiate_exchange().await?,
+                &image,
+                5000,
+                100,
+                Some(0),
+            )
+            .await?;
+            ota_download_window(
+                runner.initiate_exchange().await?,
+                &image,
+                123,
+                u64::MAX,
+                Some(4877),
+            )
+            .await?;
+            ota_download_window(runner.initiate_exchange().await?, &image, 5001, 100, None).await?;
             Ok::<_, Error>(())
         })
         .coalesce()
