@@ -1455,6 +1455,7 @@ impl OtaImagesRegistry for OtaFileImages {
 
         OtaQueryOutcome::Available(OtaImageMeta {
             version: OTA_OFFERED_VERSION,
+            software_version_string: None,
             file_designator,
             update_token: heapless::Vec::from_slice(OTA_FILE_DESIGNATOR).unwrap(),
             size: Some(self.size),

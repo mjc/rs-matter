@@ -564,6 +564,30 @@ impl OtaImages for TestOtaImage {
     }
 }
 
+struct ShortOtaImage {
+    bytes: Vec<u8>,
+    declared_len: u64,
+}
+
+impl OtaImages for ShortOtaImage {
+    async fn size(&self, fd: &[u8]) -> Option<u64> {
+        (fd == FILE_DESIGNATOR).then_some(self.declared_len)
+    }
+
+    async fn read(&self, fd: &[u8], offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
+        if fd != FILE_DESIGNATOR {
+            return Err(ErrorCode::Invalid.into());
+        }
+        let offset = usize::try_from(offset).map_err(|_| ErrorCode::Invalid)?;
+        let Some(bytes) = self.bytes.get(offset..) else {
+            return Ok(0);
+        };
+        let n = bytes.len().min(buf.len());
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Ok(n)
+    }
+}
+
 /// Send a definite-length ReceiveInit directly because the public convenience
 /// download API currently proposes an indefinite transfer.
 async fn ota_download_window(
@@ -757,6 +781,99 @@ fn test_ota_bdx_definite_length_windows() {
             )
             .await?;
             ota_download_window(runner.initiate_exchange().await?, &image, 5001, 100, None).await?;
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn test_ota_bdx_short_image_source_aborts_definite_transfer() {
+    init_env_logger();
+    let runner = new_default_runner();
+    let buffers = PooledBuffers::<BdxBuffer, 1>::new();
+    let handler = Bdx::new(OtaBdxHandler::new(
+        &buffers,
+        ShortOtaImage {
+            bytes: image_of(100),
+            declared_len: 300,
+        },
+    ));
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(handler), async {
+            let mut exchange = runner.initiate_exchange().await?;
+            let init = bdx::TransferInit {
+                transfer_control: bdx::TransferControl {
+                    version: bdx::BDX_VERSION,
+                    sender_drive: true,
+                    receiver_drive: false,
+                    async_mode: false,
+                },
+                range_control: bdx::RangeControl {
+                    def_len: true,
+                    start_offset: false,
+                    wide_range: false,
+                },
+                max_block_size: 256,
+                start_offset: 0,
+                length: 300,
+                file_designator: FILE_DESIGNATOR,
+                metadata: &[],
+            };
+            exchange
+                .send_with(|_, wb| {
+                    init.write(wb)?;
+                    Ok(Some(bdx::OpCode::ReceiveInit.into()))
+                })
+                .await?;
+
+            with_timeout(async { exchange.recv_fetch().await.map(|_| ()) }).await?;
+            let accept = bdx::TransferAccept::parse(true, exchange.rx()?.payload())?;
+            assert_eq!(accept.length, 300);
+            exchange.rx_done()?;
+
+            let mut received_len = 0usize;
+            let mut expected_counter = 0;
+            loop {
+                with_timeout(async { exchange.recv_fetch().await.map(|_| ()) }).await?;
+                let meta = exchange.rx()?.meta();
+                if meta.proto_id == rs_matter::sc::PROTO_ID_SECURE_CHANNEL {
+                    {
+                        let mut rb = ReadBuf::new(exchange.rx()?.payload());
+                        let status = StatusReport::read(&mut rb)?;
+                        assert_eq!(status.general_code, GeneralCode::Failure);
+                        assert_eq!(status.proto_id, bdx::PROTO_ID_BDX as u32);
+                        assert_eq!(
+                            status.proto_code,
+                            bdx::BdxStatus::TransferFailedUnknownError as u16
+                        );
+                    }
+                    assert!(received_len < 300);
+                    exchange.rx_done()?;
+                    break;
+                }
+
+                assert_eq!(meta.proto_opcode, bdx::OpCode::Block as u8);
+                let block = bdx::Block::parse(exchange.rx()?.payload())?;
+                assert_eq!(block.block_counter, expected_counter);
+                received_len += block.data.len();
+                let counter = block.block_counter;
+                exchange.rx_done()?;
+                exchange
+                    .send_with(|_, wb| {
+                        bdx::BlockQuery {
+                            block_counter: counter,
+                        }
+                        .write(wb)?;
+                        Ok(Some(bdx::OpCode::BlockAck.into()))
+                    })
+                    .await?;
+                expected_counter = expected_counter.wrapping_add(1);
+            }
+
             Ok::<_, Error>(())
         })
         .coalesce()

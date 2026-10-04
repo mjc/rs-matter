@@ -62,7 +62,10 @@ pub use crate::dm::clusters::decl::ota_software_update_provider::*;
 pub mod dcl;
 
 /// The maximum supported BDX file designator length.
-const MAX_FILE_DESIGNATOR: usize = 128;
+pub const MAX_FILE_DESIGNATOR: usize = 128;
+
+/// Maximum UTF-8 byte length of an offered software version string.
+pub const MAX_SOFTWARE_VERSION_STRING: usize = 64;
 
 /// Metadata describing an OTA image that a provider is willing to offer.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -70,6 +73,9 @@ const MAX_FILE_DESIGNATOR: usize = 128;
 pub struct OtaImageMeta<'a> {
     /// The version of the offered image. Must be newer than the requestor's.
     pub version: u32,
+    /// Human-readable version supplied by the image source; absent sources use
+    /// the decimal numeric version. Stored inline independently of registry borrows.
+    pub software_version_string: Option<heapless::String<MAX_SOFTWARE_VERSION_STRING>>,
     /// The BDX file designator that identifies this image when downloaded.
     pub file_designator: &'a str,
     /// The opaque `UpdateToken` (8..=32 bytes) the provider assigns to this offer.
@@ -184,9 +190,10 @@ pub trait OtaImagesRegistry {
     ) -> OtaQueryOutcome<'b>;
 
     /// Authorize the requestor to apply the already-downloaded image, upgrading to
-    /// `new_version`. `update_token` is the exact [`OtaImageMeta::update_token`]
-    /// this registry assigned in [`query`](Self::query) and the requestor echoed
-    /// back, so the registry can correlate this call with that offer.
+    /// `new_version`. Normally `update_token` echoes the offered token. If it was
+    /// lost, the requestor uses its operational node ID in network byte order.
+    /// Token mismatch alone must not continuously deny or delay applying an image;
+    /// apply decisions must not depend on stored download progress.
     ///
     /// The default authorizes an immediate apply. Override it to defer (e.g. until
     /// provider-side consent is granted, with [`OtaApplyOutcome::Await`]) or to rescind a
@@ -262,7 +269,7 @@ where
 }
 
 /// The valid `UpdateToken` length range, per the Matter spec.
-const UPDATE_TOKEN_LEN: core::ops::RangeInclusive<usize> = 8..=32;
+pub const UPDATE_TOKEN_LEN: core::ops::RangeInclusive<usize> = 8..=32;
 
 fn available_image_status(
     protocols: impl Iterator<Item = Result<DownloadProtocolEnum, Error>>,
@@ -299,8 +306,13 @@ fn image_offer_query_response<P: TLVBuilderParent>(
     response: QueryImageResponseBuilder<P>,
     image: &OtaImageMeta<'_>,
     image_uri: &str,
-    software_version_string: &str,
 ) -> Result<P, Error> {
+    let mut numeric_version = heapless::String::<16>::new();
+    write!(numeric_version, "{}", image.version).map_err(|_| ErrorCode::NoSpace)?;
+    let software_version_string = image
+        .software_version_string
+        .as_ref()
+        .map_or(numeric_version.as_str(), heapless::String::as_str);
     response
         .status(StatusEnum::UpdateAvailable)?
         .delayed_action_time(None)?
@@ -405,16 +417,13 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
         write!(uri, "bdx://{:016X}/{}", node_id, image.file_designator)
             .map_err(|_| ErrorCode::NoSpace)?;
 
-        let mut version_str = heapless::String::<16>::new();
-        write!(version_str, "{}", image.version).map_err(|_| ErrorCode::NoSpace)?;
-
         // The registry owns the (opaque) update token; enforce the spec's bound.
         if !UPDATE_TOKEN_LEN.contains(&image.update_token.len()) {
             return Err(ErrorCode::ConstraintError.into());
         }
 
         // Consent policy is the registry's; forward its decision verbatim.
-        image_offer_query_response(response, &image, uri.as_str(), version_str.as_str())
+        image_offer_query_response(response, &image, uri.as_str())
     }
 
     async fn handle_apply_update_request<P: TLVBuilderParent>(
@@ -425,6 +434,9 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
     ) -> Result<P, Error> {
         let update_token = request.update_token()?;
         let new_version = request.new_version()?;
+        if !UPDATE_TOKEN_LEN.contains(&update_token.0.len()) {
+            return Err(ErrorCode::ConstraintError.into());
+        }
 
         // The registry owns apply policy (e.g. deferring until consent is granted).
         let (action, delay) = match self.images.apply(update_token.0, new_version).await {
@@ -441,9 +453,14 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
     async fn handle_notify_update_applied(
         &self,
         _ctx: impl InvokeContext,
-        _request: NotifyUpdateAppliedRequest<'_>,
+        request: NotifyUpdateAppliedRequest<'_>,
     ) -> Result<(), Error> {
-        // Stateless provider: nothing to clean up.
+        let update_token = request.update_token()?;
+        let _software_version = request.software_version()?;
+        if !UPDATE_TOKEN_LEN.contains(&update_token.0.len()) {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+        // Bookkeeping is optional, but required fields still need validation.
         Ok(())
     }
 }
@@ -586,10 +603,14 @@ where
             let max_read = usize::try_from(window_remaining)
                 .unwrap_or(usize::MAX)
                 .min(block_buf.len());
-            let n = self.fill(&fd, offset, &mut block_buf[..max_read]).await?;
-            if n == 0 {
-                break;
-            }
+            let read = self.fill(&fd, offset, &mut block_buf[..max_read]).await;
+            let n = match read {
+                Ok(n) if n == max_read => n,
+                failure => {
+                    writer.cancel().await?;
+                    return Err(failure.err().unwrap_or_else(|| ErrorCode::Invalid.into()));
+                }
+            };
 
             offset += n as u64;
             window_remaining -= n as u64;
@@ -633,6 +654,7 @@ mod registry_lifetime_tests {
             slot.copy_from_slice(designator);
             OtaQueryOutcome::Available(OtaImageMeta {
                 version: 1,
+                software_version_string: None,
                 file_designator: core::str::from_utf8(slot).unwrap(),
                 update_token: heapless::Vec::from_slice(&self.update_token).unwrap(),
                 size: None,
@@ -741,12 +763,13 @@ mod query_image_protocol_tests {
         } else {
             let image = OtaImageMeta {
                 version: 42,
+                software_version_string: None,
                 file_designator: "update.bin",
                 update_token: heapless::Vec::from_slice(b"update-1").unwrap(),
                 size: Some(123),
                 user_consent_needed: false,
             };
-            image_offer_query_response(response, &image, "bdx://0000000000000001/update.bin", "42")
+            image_offer_query_response(response, &image, "bdx://0000000000000001/update.bin")
                 .unwrap();
         }
 

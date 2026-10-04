@@ -234,6 +234,7 @@ impl<H: OtaHttp> DclImages<'_, H> {
 
         Some(OtaImageMeta {
             version: mv.software_version,
+            software_version_string: None,
             file_designator: designator,
             // The designator (`<vid>-<pid>-<version>`) is well under 32 bytes, so
             // it doubles as the update token - identifying the image at apply time.
