@@ -22,6 +22,29 @@
 use super::nego::*;
 use super::*;
 
+/// The number of source bytes this sender intends to transfer.
+///
+/// A definite extent includes zero: a known-empty source sends one empty EOF.
+/// On an initiating wire message, zero is encoded as indefinite; the sender
+/// retains its local empty-source intent independently of that wire convention.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum TransferExtent {
+    /// The source determines its end while streaming.
+    Indefinite,
+    /// Exactly this many bytes, excluding any start offset.
+    Definite(u64),
+}
+
+impl TransferExtent {
+    pub(super) const fn length(self) -> Option<u64> {
+        match self {
+            Self::Indefinite => None,
+            Self::Definite(length) => Some(length),
+        }
+    }
+}
+
 /// A writer over a BDX transfer - the Sender side.
 ///
 /// Obtained from [`Exchange::upload`](BdxUploadInitiator::upload) on the initiating side, or
@@ -45,14 +68,17 @@ pub struct BdxWriter<'a, 'b> {
     /// counter of the next `BlockQuery`.
     counter: u32,
     block_len: usize,
+    emitted: u64,
+    extent: TransferExtent,
     state: WriterState,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum WriterState {
-    Negotiating,
+    Negotiating { max_length: Option<u64> },
     Accepting,
     Active,
+    Sending,
     Finishing,
     Finished,
     Cancelled,
@@ -64,6 +90,7 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         drive: Drive,
         buf: &'b mut [u8],
         max_block_size: u16,
+        extent: TransferExtent,
         state: WriterState,
     ) -> Self {
         // We can never stage more than the buffer holds; negotiation already
@@ -77,6 +104,8 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
             max_block_size,
             counter: 0,
             block_len: 0,
+            emitted: 0,
+            extent,
             state,
         }
     }
@@ -86,18 +115,24 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// If this future is dropped while the acceptance message is in flight, the
     /// writer remains in the accepting state and can be cancelled. Acceptance
     /// cannot be retried after it has started.
-    pub async fn accept(&mut self, length: Option<u64>) -> Result<(), Error> {
-        if self.state != WriterState::Negotiating {
+    pub async fn accept(&mut self, extent: TransferExtent) -> Result<(), Error> {
+        let WriterState::Negotiating { max_length } = self.state else {
+            return Err(ErrorCode::Invalid.into());
+        };
+        if max_length
+            .is_some_and(|max| !matches!(extent, TransferExtent::Definite(length) if length <= max))
+        {
             return Err(ErrorCode::Invalid.into());
         }
 
+        self.extent = extent;
         self.state = WriterState::Accepting;
         send_accept(
             &mut self.exchange,
             true,
             TransferControl::select(self.drive == Drive::Driver),
             self.max_block_size as u16,
-            length,
+            extent.length(),
         )
         .await?;
 
@@ -113,9 +148,10 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     pub async fn cancel(&mut self) -> Result<(), Error> {
         match self.state {
             WriterState::Cancelled | WriterState::Finished => return Ok(()),
-            WriterState::Negotiating
+            WriterState::Negotiating { .. }
             | WriterState::Accepting
             | WriterState::Active
+            | WriterState::Sending
             | WriterState::Finishing => {}
         }
 
@@ -152,8 +188,18 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
             return Ok(0);
         }
 
+        // Validate the whole offered slice before copying or sending a staged
+        // block. A rejected overshoot must leave previously accepted bytes intact.
+        self.block_end(
+            self.block_len
+                .checked_add(data.len())
+                .ok_or(ErrorCode::Invalid)?,
+        )?;
+
         if self.block_len == self.max_block_size {
-            self.send_block(false).await?;
+            // The nonempty continuation proves an indefinite transfer exceeds
+            // one block; the preceding full block cannot be its sole EOF.
+            self.send_block(self.block_len, false).await?;
         }
 
         let space = self.max_block_size - self.block_len;
@@ -177,29 +223,39 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// caller streaming from another source (a flash region, a socket) can read
     /// straight into this slice instead of into its own buffer and copying. Do not
     /// interleave it with [`write`](Self::write), which stages into the same space.
-    pub fn block_buf(&mut self) -> &mut [u8] {
-        &mut self.buf[..self.max_block_size]
+    /// Access fails while accepted write bytes are staged or an operation is in
+    /// flight, preventing those bytes from being silently replaced.
+    pub fn block_buf(&mut self) -> Result<&mut [u8], Error> {
+        if self.state != WriterState::Active || self.block_len != 0 {
+            return Err(ErrorCode::Invalid.into());
+        }
+
+        Ok(&mut self.buf[..self.max_block_size])
     }
 
     /// Send `len` bytes - previously written into [`block_buf`](Self::block_buf) -
-    /// as one block. `len` must not exceed [`max_block_size`](Self::max_block_size).
+    /// as one block. At the declared extent this sends `BlockEof` and waits for
+    /// its acknowledgement. `len` must not exceed the buffer or declared extent.
+    /// An indefinite first block is ambiguous; use a definite extent, or stream
+    /// through [`write`](Self::write) and explicitly finish its last block.
     pub async fn commit(&mut self, len: usize) -> Result<(), Error> {
-        if self.state != WriterState::Active {
+        if self.state != WriterState::Active || self.block_len != 0 {
             return Err(ErrorCode::Invalid.into());
         }
 
-        if len > self.max_block_size {
-            // Truncating here would silently drop the tail of the caller's block;
-            // surface the contract violation instead.
+        if self.extent == TransferExtent::Indefinite && self.emitted == 0 {
             return Err(ErrorCode::Invalid.into());
         }
-        self.block_len = len;
 
-        self.send_block(false).await
+        self.send_block(len, false).await
     }
 
     /// Flush the final (possibly empty) block and complete the transfer.
-    pub async fn finish(mut self) -> Result<(), Error> {
+    ///
+    /// This is idempotent after a final commit/flush. A declared extent must be
+    /// satisfied exactly. The borrowed writer remains available for cancellation
+    /// if this future is dropped or the source ends prematurely.
+    pub async fn finish(&mut self) -> Result<(), Error> {
         let len = self.block_len;
         self.finish_with_len(len).await
     }
@@ -210,27 +266,82 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// waiting for the peer's final acknowledgement, call [`cancel`](Self::cancel)
     /// to report failure and make the writer terminal.
     pub async fn finish_with_len(&mut self, len: usize) -> Result<(), Error> {
-        if self.state != WriterState::Active || len > self.max_block_size {
+        if self.state == WriterState::Finished && len == 0 {
+            return Ok(());
+        }
+        if self.block_len != 0 && len != self.block_len {
             return Err(ErrorCode::Invalid.into());
         }
 
-        self.block_len = len;
-        self.state = WriterState::Finishing;
-        self.send_block(true).await?;
-        self.exchange.acknowledge().await?;
-        self.state = WriterState::Finished;
-        Ok(())
+        self.send_block(len, true).await
+    }
+
+    /// Deliver all staged bytes. Reaching a definite extent sends the final EOF;
+    /// after its acknowledgement later flush/finish calls emit nothing.
+    ///
+    /// A nonempty first flush is rejected if the extent is indefinite or the
+    /// declared transfer fits in one block but is not yet complete. Successful
+    /// flush cannot retain buffered bytes or split a one-block transfer into a
+    /// non-final block and an empty EOF. Rejection preserves the staged bytes.
+    pub async fn flush(&mut self) -> Result<(), Error> {
+        if self.state == WriterState::Finished {
+            return Ok(());
+        }
+        if self.state != WriterState::Active {
+            return Err(ErrorCode::Invalid.into());
+        }
+        if self.block_len == 0 && self.extent != TransferExtent::Definite(0) {
+            return Ok(());
+        }
+        if self.block_len != 0 && self.extent == TransferExtent::Indefinite && self.emitted == 0 {
+            return Err(ErrorCode::Invalid.into());
+        }
+
+        self.send_block(self.block_len, false).await
+    }
+
+    fn block_end(&self, len: usize) -> Result<u64, Error> {
+        let len = u64::try_from(len).map_err(|_| ErrorCode::Invalid)?;
+        let end = self.emitted.checked_add(len).ok_or(ErrorCode::Invalid)?;
+        if matches!(self.extent, TransferExtent::Definite(length) if end > length) {
+            return Err(ErrorCode::Invalid.into());
+        }
+        Ok(end)
     }
 
     /// Send the staged bytes as one block, driving/awaiting acknowledgement per
     /// the negotiated drive mode.
-    async fn send_block(&mut self, is_eof: bool) -> Result<(), Error> {
-        let allowed_state =
-            self.state == WriterState::Active || (is_eof && self.state == WriterState::Finishing);
-        if !allowed_state {
+    async fn send_block(&mut self, len: usize, finish: bool) -> Result<(), Error> {
+        if self.state != WriterState::Active || len > self.max_block_size {
             return Err(ErrorCode::Invalid.into());
         }
 
+        let end = self.block_end(len)?;
+        let is_eof = match self.extent {
+            TransferExtent::Indefinite => finish,
+            TransferExtent::Definite(length) => {
+                if finish && end != length {
+                    return Err(ErrorCode::Invalid.into());
+                }
+                if end != length && length <= self.max_block_size as u64 {
+                    // The entire transfer must fit in its sole data-bearing EOF.
+                    return Err(ErrorCode::Invalid.into());
+                }
+                end == length
+            }
+        };
+        if len == 0 && !is_eof {
+            return Err(ErrorCode::Invalid.into());
+        }
+
+        self.block_len = len;
+        // Set the phase before *any* await. Dropping a query/send/ACK wait must
+        // leave cancellation as the only operation that can use this exchange.
+        self.state = if is_eof {
+            WriterState::Finishing
+        } else {
+            WriterState::Sending
+        };
         let counter = self.counter;
 
         if matches!(self.drive, Drive::Follower) {
@@ -243,7 +354,6 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         } else {
             OpCode::Block
         };
-        let len = self.block_len;
         {
             let data = &self.buf[..len];
             self.exchange
@@ -257,8 +367,6 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
                 })
                 .await?;
         }
-        self.block_len = 0;
-
         if matches!(self.drive, Drive::Driver) {
             let ack = if is_eof {
                 OpCode::BlockAckEof
@@ -271,7 +379,18 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
             self.recv_control(OpCode::BlockAckEof, counter).await?;
         }
 
+        if is_eof {
+            self.exchange.acknowledge().await?;
+        }
+
+        self.emitted = end;
+        self.block_len = 0;
         self.counter = self.counter.wrapping_add(1);
+        self.state = if is_eof {
+            WriterState::Finished
+        } else {
+            WriterState::Active
+        };
 
         Ok(())
     }
@@ -326,17 +445,8 @@ impl embedded_io_async::Write for BdxWriter<'_, '_> {
         BdxWriter::write(self, data).await
     }
 
-    /// Send any staged-but-unsent bytes as a (non-final) block.
     async fn flush(&mut self) -> Result<(), Self::Error> {
-        if self.state != WriterState::Active {
-            return Err(ErrorCode::Invalid.into());
-        }
-
-        if self.block_len > 0 {
-            self.send_block(false).await?;
-        }
-
-        Ok(())
+        BdxWriter::flush(self).await
     }
 }
 
@@ -352,11 +462,13 @@ pub trait BdxUploadInitiator<'a> {
     /// interrupted upload. The receiver may refuse with
     /// [`StartOffsetNotSupported`](BdxStatus::StartOffsetNotSupported); otherwise
     /// the caller is responsible for feeding only the bytes from `offset` onward.
+    /// `extent` declares the remaining source bytes and determines final framing.
     async fn upload<'b>(
         self,
         buf: &'b mut [u8],
         file_designator: &[u8],
         offset: Option<u64>,
+        extent: TransferExtent,
     ) -> Result<BdxWriter<'a, 'b>, Error>;
 }
 
@@ -366,6 +478,7 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
         buf: &'b mut [u8],
         file_designator: &[u8],
         offset: Option<u64>,
+        extent: TransferExtent,
     ) -> Result<BdxWriter<'a, 'b>, Error> {
         if buf.is_empty() {
             // An empty staging buffer would propose a max block size of 0 and yield
@@ -375,7 +488,15 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
 
         // We can never send a block larger than our staging buffer or our TX buffer.
         let pmbs = buf.len().min(MAX_TX_BLOCK_SIZE as usize) as u16;
-        send_init(&mut self, OpCode::SendInit, pmbs, offset, file_designator).await?;
+        send_init(
+            &mut self,
+            OpCode::SendInit,
+            pmbs,
+            offset,
+            file_designator,
+            extent.length(),
+        )
+        .await?;
 
         match recv_accept(&mut self, false).await? {
             // We are the sender: we drive iff sender-drive was selected.
@@ -385,7 +506,14 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
                 } else {
                     Drive::Follower
                 };
-                Ok(BdxWriter::new(self, drive, buf, mbs, WriterState::Active))
+                Ok(BdxWriter::new(
+                    self,
+                    drive,
+                    buf,
+                    mbs,
+                    extent,
+                    WriterState::Active,
+                ))
             }
             None => super::nego::abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
         }
@@ -482,21 +610,23 @@ impl<'a> BdxDownloadResponder<'a> {
             drive,
             buf,
             mbs,
-            WriterState::Negotiating,
+            TransferExtent::Indefinite,
+            WriterState::Negotiating {
+                max_length: self.requested_length,
+            },
         ))
     }
 
     /// Accept the transfer and start sending, staging blocks in the (non-empty)
-    /// caller-provided buffer `buf` (its length bounds the block size). `length`
-    /// advertises a definite transfer length (enabling the receiver's progress
-    /// reporting) when known.
+    /// caller-provided buffer `buf` (its length bounds the block size). `extent`
+    /// advertises and enforces the remaining transfer length when known.
     pub async fn reply<'b>(
         self,
         buf: &'b mut [u8],
-        length: Option<u64>,
+        extent: TransferExtent,
     ) -> Result<BdxWriter<'a, 'b>, Error> {
         let mut writer = self.prepare_reply(buf).await?;
-        writer.accept(length).await?;
+        writer.accept(extent).await?;
         Ok(writer)
     }
 

@@ -39,7 +39,7 @@ use core::pin::pin;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
-use rs_matter::bdx::{Bdx, BdxReader, BdxUploadInitiator, BdxWriter};
+use rs_matter::bdx::{Bdx, BdxReader, BdxUploadInitiator, BdxWriter, TransferExtent};
 use rs_matter::dm::clusters::diag_logs::client::{DiagLogsBdxHandler, DiagLogsReceiver};
 use rs_matter::error::Error;
 use rs_matter::utils::select::Coalesce;
@@ -86,6 +86,7 @@ async fn write_all(writer: &mut BdxWriter<'_, '_>, mut data: &[u8]) -> Result<()
 /// here, just a buffer), signalling completion so the test can assert.
 struct CollectingReceiver {
     fd: RefCell<Vec<u8>>,
+    length: RefCell<Option<u64>>,
     data: RefCell<Vec<u8>>,
     done: Notification,
 }
@@ -94,6 +95,7 @@ impl CollectingReceiver {
     fn new() -> Self {
         Self {
             fd: RefCell::new(Vec::new()),
+            length: RefCell::new(None),
             data: RefCell::new(Vec::new()),
             done: Notification::new(),
         }
@@ -101,6 +103,7 @@ impl CollectingReceiver {
 
     fn reset(&self) {
         self.fd.borrow_mut().clear();
+        *self.length.borrow_mut() = None;
         self.data.borrow_mut().clear();
     }
 }
@@ -112,6 +115,7 @@ impl DiagLogsReceiver for CollectingReceiver {
         reader: &mut BdxReader<'_>,
     ) -> Result<(), Error> {
         self.fd.borrow_mut().extend_from_slice(file_designator);
+        *self.length.borrow_mut() = reader.len();
 
         // Pull the bytes ourselves (a deliberately non-block-aligned buffer to
         // exercise partial-block / cross-block reads).
@@ -154,7 +158,14 @@ fn diag_logs_bdx_receive() {
                 // Stand in for the device pushing the log over BDX.
                 let exchange = runner.initiate_exchange().await?;
                 let mut wbuf = [0u8; 1024];
-                let mut writer = exchange.upload(&mut wbuf, FILE_DESIGNATOR, None).await?;
+                let mut writer = exchange
+                    .upload(
+                        &mut wbuf,
+                        FILE_DESIGNATOR,
+                        None,
+                        TransferExtent::Definite(size as u64),
+                    )
+                    .await?;
                 with_timeout(async {
                     write_all(&mut writer, &log).await?;
                     writer.finish().await
@@ -165,6 +176,11 @@ fn diag_logs_bdx_receive() {
                 receiver.done.wait().await;
                 assert_eq!(&*receiver.data.borrow(), &log, "log size {size}");
                 assert_eq!(&*receiver.fd.borrow(), FILE_DESIGNATOR);
+                assert_eq!(
+                    *receiver.length.borrow(),
+                    (size > 0).then_some(size as u64),
+                    "declared length for log size {size}"
+                );
             }
 
             Ok::<_, Error>(())

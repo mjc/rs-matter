@@ -53,7 +53,7 @@
 
 use core::num::NonZeroU8;
 
-use crate::bdx::{BdxBuffer, BdxUploadInitiator};
+use crate::bdx::{BdxBuffer, BdxUploadInitiator, TransferExtent};
 use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Octets, TLVBuilderParent};
@@ -136,6 +136,8 @@ struct Job {
     fd: heapless::String<MAX_FILE_DESIGNATOR>,
     /// Which log to stream.
     intent: IntentEnum,
+    /// The size observed when the request was admitted, also declared on BDX.
+    length: u64,
 }
 
 /// The single-slot state machine coordinating the command handler with the
@@ -281,7 +283,12 @@ where
             };
 
         let mut writer = match exchange
-            .upload(buf.as_mut_slice(), job.fd.as_bytes(), None)
+            .upload(
+                buf.as_mut_slice(),
+                job.fd.as_bytes(),
+                None,
+                TransferExtent::Definite(job.length),
+            )
             .await
         {
             Ok(writer) => writer,
@@ -296,17 +303,30 @@ where
         // Handshake accepted: the command handler can now answer `Success`.
         self.handshake.signal(true);
 
-        let mut offset = 0;
+        let mut offset = 0u64;
+        let mut remaining = job.length;
 
-        loop {
-            let n = self.fill(job.intent, offset, writer.block_buf()).await?;
-            if n == 0 {
-                break;
+        while remaining > 0 {
+            let block_len = remaining.min(writer.max_block_size() as u64) as usize;
+            let n = match self
+                .fill(job.intent, offset, &mut writer.block_buf()?[..block_len])
+                .await
+            {
+                Ok(n) => n,
+                Err(e) => {
+                    let _ = writer.cancel().await;
+                    return Err(e);
+                }
+            };
+
+            if n != block_len {
+                let _ = writer.cancel().await;
+                return Err(ErrorCode::Invalid.into());
             }
 
             writer.commit(n).await?;
-
             offset += n as u64;
+            remaining -= n as u64;
         }
 
         writer.finish().await
@@ -397,6 +417,7 @@ where
             node_id,
             fd: fd_str,
             intent,
+            length: size,
         };
 
         // Claim the single transfer slot; if one is already in flight, we are busy.

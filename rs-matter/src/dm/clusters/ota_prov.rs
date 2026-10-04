@@ -37,7 +37,7 @@
 use core::fmt::Write as _;
 use core::num::NonZeroU8;
 
-use crate::bdx::{BdxHandler, BdxResponder, BdxStatus};
+use crate::bdx::{BdxHandler, BdxResponder, BdxStatus, TransferExtent};
 use crate::dm::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Octets, TLVBuilderParent};
@@ -592,14 +592,14 @@ where
         // Hand it to the writer, which sends each block straight out of it - the
         // image bytes are read directly into the writer's block buffer, no copy.
         let mut writer = responder
-            .reply(buf.as_mut_slice(), Some(window_len))
+            .reply(buf.as_mut_slice(), TransferExtent::Definite(window_len))
             .await?;
 
         let mut offset = start_offset;
         let mut window_remaining = window_len;
 
         while window_remaining > 0 {
-            let block_buf = writer.block_buf();
+            let block_buf = writer.block_buf()?;
             let max_read = usize::try_from(window_remaining)
                 .unwrap_or(usize::MAX)
                 .min(block_buf.len());

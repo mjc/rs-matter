@@ -36,6 +36,7 @@ use embassy_time::{Duration, Timer};
 use rs_matter::bdx::{
     self, Bdx, BdxDownloadInitiator, BdxDownloadResponder, BdxHandler, BdxReader, BdxResponder,
     BdxUploadInitiator, BdxUploadResponder, BdxWriter, ChainedBdxHandler, EmptyBdxHandler,
+    TransferExtent,
 };
 use rs_matter::dm::clusters::ota_prov::{BdxBuffer, OtaBdxHandler, OtaImages};
 use rs_matter::error::{Error, ErrorCode};
@@ -117,7 +118,9 @@ impl ExchangeHandler for DownloadResponder<'_> {
         let responder = BdxDownloadResponder::accept(exchange).await?;
         assert_eq!(responder.fd(), FILE_DESIGNATOR);
         let mut wbuf = [0u8; 1024];
-        let mut writer = responder.reply(&mut wbuf, Some(image.len() as u64)).await?;
+        let mut writer = responder
+            .reply(&mut wbuf, TransferExtent::Definite(image.len() as u64))
+            .await?;
         write_all(&mut writer, image).await?;
         writer.finish().await
     }
@@ -163,7 +166,7 @@ impl ExchangeHandler for WriteDownloadResponder {
         let responder = BdxDownloadResponder::accept(exchange).await?;
         let mut buf = [0; 256];
         let mut writer = responder
-            .reply(&mut buf, Some(self.image.len() as u64))
+            .reply(&mut buf, TransferExtent::Definite(self.image.len() as u64))
             .await?;
         write_all(&mut writer, &self.image).await?;
         let final_len = self.image.len().min(writer.max_block_size());
@@ -171,6 +174,82 @@ impl ExchangeHandler for WriteDownloadResponder {
         assert!(writer.write(b"late").await.is_err());
         assert!(writer.commit(0).await.is_err());
         Ok(())
+    }
+}
+
+struct FlushDownloadResponder {
+    image: Vec<u8>,
+}
+
+struct CommitDownloadResponder {
+    image: Vec<u8>,
+}
+
+impl ExchangeHandler for CommitDownloadResponder {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(self.image.len() as u64))
+            .await?;
+        writer.block_buf()?[..self.image.len()].copy_from_slice(&self.image);
+        writer.commit(self.image.len()).await?;
+        writer.finish().await
+    }
+}
+
+struct RecoverExtentDownloadResponder {
+    image: Vec<u8>,
+}
+
+impl ExchangeHandler for RecoverExtentDownloadResponder {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(self.image.len() as u64))
+            .await?;
+        write_all(&mut writer, &self.image[..3]).await?;
+        assert!(
+            writer.finish().await.is_err(),
+            "undershoot must not send EOF"
+        );
+        write_all(&mut writer, &self.image[3..]).await?;
+        assert!(
+            writer.write(b"x").await.is_err(),
+            "overshoot must be rejected"
+        );
+        writer.finish().await
+    }
+}
+
+struct MixedWriteCommitDownloadResponder;
+
+impl ExchangeHandler for MixedWriteCommitDownloadResponder {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(4))
+            .await?;
+        assert_eq!(writer.write(b"ab").await?, 2);
+        assert!(writer.block_buf().is_err());
+        assert!(writer.commit(2).await.is_err());
+        assert_eq!(writer.write(b"cd").await?, 2);
+        writer.finish().await
+    }
+}
+
+impl ExchangeHandler for FlushDownloadResponder {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(self.image.len() as u64))
+            .await?;
+        write_all(&mut writer, &self.image).await?;
+        embedded_io_async::Write::flush(&mut writer).await?;
+        writer.finish().await
     }
 }
 
@@ -289,13 +368,156 @@ fn test_bdx_writer_finishes_full_blocks_with_data_eof() {
     });
 }
 
+#[test]
+fn test_bdx_writer_flush_uses_declared_extent_for_final_eof() {
+    init_env_logger();
+
+    for len in [0, 1, 255, 256, 257, 512, 529] {
+        futures_lite::future::block_on(async {
+            let runner = new_default_runner();
+            let image = image_of(len);
+            select(
+                runner.run_responder(FlushDownloadResponder {
+                    image: image.clone(),
+                }),
+                async {
+                    receive_writer_frames(runner.initiate_exchange().await?, &image).await?;
+                    Ok::<_, Error>(())
+                },
+            )
+            .coalesce()
+            .await
+            .unwrap();
+        });
+    }
+}
+
+#[test]
+fn test_bdx_writer_commit_uses_declared_extent_for_final_eof() {
+    init_env_logger();
+
+    futures_lite::future::block_on(async {
+        let runner = new_default_runner();
+        let image = image_of(17);
+        select(
+            runner.run_responder(CommitDownloadResponder {
+                image: image.clone(),
+            }),
+            async {
+                receive_writer_frames(runner.initiate_exchange().await?, &image).await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn test_bdx_writer_extent_rejection_preserves_staged_data() {
+    init_env_logger();
+
+    futures_lite::future::block_on(async {
+        let runner = new_default_runner();
+        let image = image_of(5);
+        select(
+            runner.run_responder(RecoverExtentDownloadResponder {
+                image: image.clone(),
+            }),
+            async {
+                receive_writer_frames(runner.initiate_exchange().await?, &image).await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn test_bdx_writer_rejects_mixing_write_and_commit_without_data_loss() {
+    init_env_logger();
+
+    futures_lite::future::block_on(async {
+        let runner = new_default_runner();
+        let image = b"abcd";
+        select(
+            runner.run_responder(MixedWriteCommitDownloadResponder),
+            async {
+                receive_writer_frames(runner.initiate_exchange().await?, image).await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn test_bdx_writer_indefinite_flush_and_commit_boundaries() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let images = vec![image_of(300), image_of(300)];
+    let responder = UploadResponder {
+        images: &images,
+        next: AtomicUsize::new(0),
+    };
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(responder), async {
+            let first_image = &images[0];
+            let exchange = runner.initiate_exchange().await?;
+            let mut tx_buf = [0u8; 128];
+            let mut writer = exchange
+                .upload(
+                    &mut tx_buf,
+                    FILE_DESIGNATOR,
+                    None,
+                    TransferExtent::Indefinite,
+                )
+                .await?;
+            embedded_io_async::Write::flush(&mut writer).await?;
+            write_all(&mut writer, &first_image[..11]).await?;
+            assert!(embedded_io_async::Write::flush(&mut writer).await.is_err());
+            write_all(&mut writer, &first_image[11..]).await?;
+            writer.finish().await?;
+
+            let second_image = &images[1];
+            let exchange = runner.initiate_exchange().await?;
+            let mut tx_buf = [0u8; 128];
+            let mut writer = exchange
+                .upload(
+                    &mut tx_buf,
+                    FILE_DESIGNATOR,
+                    None,
+                    TransferExtent::Indefinite,
+                )
+                .await?;
+            writer.block_buf()?[..7].copy_from_slice(b"staged!");
+            assert!(writer.commit(7).await.is_err());
+            write_all(&mut writer, second_image).await?;
+            writer.finish().await?;
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
 struct CancelFinalEofResponder;
 
 impl ExchangeHandler for CancelFinalEofResponder {
     async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
         let responder = BdxDownloadResponder::accept(exchange).await?;
         let mut buf = [0; 256];
-        let mut writer = responder.reply(&mut buf, Some(1)).await?;
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(1))
+            .await?;
         writer.write(b"x").await?;
 
         let outcome = {
@@ -407,7 +629,7 @@ impl ExchangeHandler for CancelNegotiationResponder {
         let mut buf = [0; 256];
         let mut writer = responder.prepare_reply(&mut buf).await?;
         let outcome = {
-            let accept = core::pin::pin!(writer.accept(Some(1)));
+            let accept = core::pin::pin!(writer.accept(TransferExtent::Definite(1)));
             let delay = core::pin::pin!(Timer::after(Duration::from_millis(250)));
             select(accept, delay).await
         };
@@ -415,12 +637,88 @@ impl ExchangeHandler for CancelNegotiationResponder {
 
         // The first acceptance attempt is terminal once dropped; retrying must
         // not send a second ReceiveAccept.
-        assert!(writer.accept(Some(1)).await.is_err());
+        assert!(writer.accept(TransferExtent::Definite(1)).await.is_err());
         writer.cancel().await?;
         assert!(writer.write(b"late").await.is_err());
         assert!(writer.commit(0).await.is_err());
         Ok(())
     }
+}
+
+struct RequestedExtentResponder;
+
+impl ExchangeHandler for RequestedExtentResponder {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder.prepare_reply(&mut buf).await?;
+        assert!(writer.accept(TransferExtent::Definite(65)).await.is_err());
+        assert!(writer.accept(TransferExtent::Indefinite).await.is_err());
+        writer.accept(TransferExtent::Definite(64)).await?;
+        writer.block_buf()?[..64].fill(0x5A);
+        writer.finish_with_len(64).await
+    }
+}
+
+#[test]
+fn test_bdx_download_accept_cannot_exceed_requested_extent() {
+    init_env_logger();
+    let runner = new_default_runner();
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(RequestedExtentResponder), async {
+            let mut exchange = runner.initiate_exchange().await?;
+            let init = bdx::TransferInit {
+                transfer_control: bdx::TransferControl {
+                    version: bdx::BDX_VERSION,
+                    sender_drive: true,
+                    receiver_drive: false,
+                    async_mode: false,
+                },
+                range_control: bdx::RangeControl {
+                    def_len: true,
+                    start_offset: false,
+                    wide_range: false,
+                },
+                max_block_size: 64,
+                start_offset: 0,
+                length: 64,
+                file_designator: FILE_DESIGNATOR,
+                metadata: &[],
+            };
+            exchange
+                .send_with(|_, wb| {
+                    init.write(wb)?;
+                    Ok(Some(bdx::OpCode::ReceiveInit.into()))
+                })
+                .await?;
+
+            exchange.recv_fetch().await?;
+            let accept = bdx::TransferAccept::parse(true, exchange.rx()?.payload())?;
+            assert_eq!(accept.length, 64);
+            exchange.rx_done()?;
+            exchange.recv_fetch().await?;
+            assert_eq!(
+                exchange.rx()?.meta().proto_opcode,
+                bdx::OpCode::BlockEof as u8
+            );
+            let block = bdx::Block::parse(exchange.rx()?.payload())?;
+            assert_eq!(block.block_counter, 0);
+            assert_eq!(block.data, &[0x5A; 64]);
+            exchange.rx_done()?;
+            exchange
+                .send_with(|_, wb| {
+                    bdx::BlockQuery { block_counter: 0 }.write(wb)?;
+                    Ok(Some(bdx::OpCode::BlockAckEof.into()))
+                })
+                .await?;
+            exchange.acknowledge().await?;
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
 }
 
 #[test]
@@ -510,7 +808,9 @@ impl ExchangeHandler for OffsetDownloadResponder<'_> {
         let responder = BdxDownloadResponder::accept(exchange).await?;
         let tail = &self.image[responder.start_offset() as usize..];
         let mut wbuf = [0u8; 1024];
-        let mut writer = responder.reply(&mut wbuf, Some(tail.len() as u64)).await?;
+        let mut writer = responder
+            .reply(&mut wbuf, TransferExtent::Definite(tail.len() as u64))
+            .await?;
         write_all(&mut writer, tail).await?;
         writer.finish().await
     }
@@ -918,7 +1218,12 @@ fn test_bdx_upload_with_offset() {
             let exchange = runner.initiate_exchange().await?;
             let mut wbuf = [0u8; 1024];
             let mut writer = exchange
-                .upload(&mut wbuf, FILE_DESIGNATOR, Some(offset))
+                .upload(
+                    &mut wbuf,
+                    FILE_DESIGNATOR,
+                    Some(offset),
+                    TransferExtent::Definite((image.len() as u64) - offset),
+                )
                 .await?;
             write_all(&mut writer, &image[offset as usize..]).await?;
             writer.finish().await?;
@@ -966,10 +1271,21 @@ fn test_bdx_upload_streaming() {
 
     futures_lite::future::block_on(async {
         select(runner.run_responder(responder), async {
-            for image in &images {
+            for (index, image) in images.iter().enumerate() {
                 let exchange = runner.initiate_exchange().await?;
                 let mut wbuf = [0u8; 1024];
-                let mut writer = exchange.upload(&mut wbuf, FILE_DESIGNATOR, None).await?;
+                let mut writer = exchange
+                    .upload(
+                        &mut wbuf,
+                        FILE_DESIGNATOR,
+                        None,
+                        if index % 2 == 0 {
+                            TransferExtent::Indefinite
+                        } else {
+                            TransferExtent::Definite(image.len() as u64)
+                        },
+                    )
+                    .await?;
                 with_timeout(async {
                     write_all(&mut writer, image).await?;
                     writer.finish().await
@@ -1007,7 +1323,7 @@ impl BdxHandler for ImageServer {
 
         let mut wbuf = [0u8; 512];
         let mut writer = responder
-            .reply(&mut wbuf, Some(self.image.len() as u64))
+            .reply(&mut wbuf, TransferExtent::Definite(self.image.len() as u64))
             .await?;
         write_all(&mut writer, &self.image).await?;
         writer.finish().await
@@ -1076,7 +1392,14 @@ fn test_bdx_server_routing() {
             // An upload routes to the log sink (which asserts the payload).
             let exchange = runner.initiate_exchange().await?;
             let mut wbuf = [0u8; 512];
-            let mut writer = exchange.upload(&mut wbuf, PROCESS_FD, None).await?;
+            let mut writer = exchange
+                .upload(
+                    &mut wbuf,
+                    PROCESS_FD,
+                    None,
+                    TransferExtent::Definite(upload.len() as u64),
+                )
+                .await?;
             with_timeout(async {
                 write_all(&mut writer, &upload).await?;
                 writer.finish().await
@@ -1373,13 +1696,15 @@ impl ExchangeHandler for CancelDownloadAfterFirstBlockHandler<'_> {
         assert_eq!(responder.fd(), FILE_DESIGNATOR);
 
         let mut buf = [0u8; 1024];
-        let mut writer = responder.reply(&mut buf, Some(2048)).await?;
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(2048))
+            .await?;
 
-        writer.block_buf()[..1024].fill(0xA5);
+        writer.block_buf()?[..1024].fill(0xA5);
         writer.commit(1024).await?;
         self.0.store(1, Ordering::Release);
 
-        writer.block_buf()[..1024].fill(0x5A);
+        writer.block_buf()?[..1024].fill(0x5A);
         let pending = {
             let mut commit = core::pin::pin!(writer.commit(1024));
             core::future::poll_fn(|cx| match commit.as_mut().poll(cx) {
@@ -1406,8 +1731,10 @@ impl ExchangeHandler for CancelDownloadWithUnackedBlockHandler<'_> {
     async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
         let responder = BdxDownloadResponder::accept(exchange).await?;
         let mut buf = [0u8; 1024];
-        let mut writer = responder.reply(&mut buf, Some(2048)).await?;
-        writer.block_buf()[..1024].fill(0xA5);
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(2048))
+            .await?;
+        writer.block_buf()?[..1024].fill(0xA5);
 
         let commit_outcome = {
             let mut commit = core::pin::pin!(writer.commit(1024));
@@ -1473,8 +1800,10 @@ impl ExchangeHandler for CancelDownloadWithLateBlockQueryHandler<'_> {
     async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
         let responder = BdxDownloadResponder::accept(exchange).await?;
         let mut buf = [0u8; 1024];
-        let mut writer = responder.reply(&mut buf, Some(2048)).await?;
-        writer.block_buf()[..1024].fill(0xA5);
+        let mut writer = responder
+            .reply(&mut buf, TransferExtent::Definite(2048))
+            .await?;
+        writer.block_buf()?[..1024].fill(0xA5);
         writer.commit(1024).await?;
 
         writer.cancel().await?;
@@ -1620,7 +1949,14 @@ fn test_bdx_writer_cancel_sends_status_and_stops_transfer() {
             async {
                 let exchange = runner.initiate_exchange().await?;
                 let mut tx_buf = [0u8; 128];
-                let mut writer = exchange.upload(&mut tx_buf, FILE_DESIGNATOR, None).await?;
+                let mut writer = exchange
+                    .upload(
+                        &mut tx_buf,
+                        FILE_DESIGNATOR,
+                        None,
+                        TransferExtent::Definite(12),
+                    )
+                    .await?;
 
                 assert_eq!(writer.write(b"staged data").await?, 11);
                 writer.cancel().await?;
@@ -1663,8 +1999,15 @@ fn test_bdx_writer_cancel_after_pending_commit() {
             async {
                 let exchange = runner.initiate_exchange().await?;
                 let mut tx_buf = [0u8; 128];
-                let mut writer = exchange.upload(&mut tx_buf, FILE_DESIGNATOR, None).await?;
-                writer.write(b"block data").await?;
+                let mut writer = exchange
+                    .upload(
+                        &mut tx_buf,
+                        FILE_DESIGNATOR,
+                        None,
+                        TransferExtent::Definite(256),
+                    )
+                    .await?;
+                writer.block_buf()?[..10].copy_from_slice(b"block data");
 
                 let commit_pending = {
                     let mut commit = core::pin::pin!(writer.commit(10));
@@ -1675,6 +2018,10 @@ fn test_bdx_writer_cancel_after_pending_commit() {
                     .await
                 };
                 assert!(commit_pending, "commit should wait for BlockQuery");
+                assert!(writer.write(b"later").await.is_err());
+                assert!(writer.commit(1).await.is_err());
+                assert!(embedded_io_async::Write::flush(&mut writer).await.is_err());
+                assert!(writer.block_buf().is_err());
 
                 with_timeout(async {
                     writer.cancel().await?;
@@ -2116,7 +2463,14 @@ fn test_bdx_writer_cancel_future_drop_is_terminal() {
             async {
                 let exchange = runner.initiate_exchange().await?;
                 let mut tx_buf = [0u8; 128];
-                let mut writer = exchange.upload(&mut tx_buf, FILE_DESIGNATOR, None).await?;
+                let mut writer = exchange
+                    .upload(
+                        &mut tx_buf,
+                        FILE_DESIGNATOR,
+                        None,
+                        TransferExtent::Definite(12),
+                    )
+                    .await?;
                 assert_eq!(writer.write(b"staged data").await?, 11);
 
                 let cancel_pending = {

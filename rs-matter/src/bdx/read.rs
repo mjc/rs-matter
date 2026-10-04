@@ -280,6 +280,7 @@ impl<'a> BdxDownloadInitiator<'a> for Exchange<'a> {
             MAX_RX_BLOCK_SIZE,
             offset,
             file_designator,
+            None,
         )
         .await?;
 

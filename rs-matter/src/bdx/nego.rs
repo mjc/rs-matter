@@ -109,7 +109,7 @@ pub(super) async fn send_abort_report_draining_query(
         .await
 }
 
-/// Build the streaming `*Init` proposal (both drive modes, indefinite length).
+/// Build the streaming `*Init` proposal (both drive modes, optional extent).
 /// `max_block_size` is the largest block this node is willing to handle.
 /// `start_offset`, when non-zero, requests the transfer to begin at that byte
 /// offset of the file (the responder may reject it with `StartOffsetNotSupported`).
@@ -119,9 +119,13 @@ pub(super) async fn send_init(
     max_block_size: u16,
     start_offset: Option<u64>,
     file_designator: &[u8],
+    length: Option<u64>,
 ) -> Result<(), Error> {
     // Offset 0 is the implicit default, so it needs no range-control bit.
     let start_offset = start_offset.filter(|&o| o > 0);
+    // Init LEN zero means indefinite even when the sender knows its source is
+    // empty. That local intent stays in the writer rather than changing the wire.
+    let length = length.filter(|&length| length > 0);
 
     let init = TransferInit {
         transfer_control: TransferControl {
@@ -131,13 +135,14 @@ pub(super) async fn send_init(
             async_mode: false,
         },
         range_control: RangeControl {
-            def_len: false,
+            def_len: length.is_some(),
             start_offset: start_offset.is_some(),
-            wide_range: start_offset.is_some_and(|o| o > u32::MAX as u64),
+            wide_range: start_offset.is_some_and(|o| o > u32::MAX as u64)
+                || length.is_some_and(|length| length > u32::MAX as u64),
         },
         max_block_size,
         start_offset: start_offset.unwrap_or(0),
-        length: 0,
+        length: length.unwrap_or(0),
         file_designator,
         metadata: &[],
     };
