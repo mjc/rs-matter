@@ -45,15 +45,26 @@ pub struct BdxWriter<'a, 'b> {
     /// counter of the next `BlockQuery`.
     counter: u32,
     block_len: usize,
-    cancelled: bool,
+    state: WriterState,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum WriterState {
+    Negotiating,
+    Accepting,
+    Active,
+    Finishing,
+    Finished,
+    Cancelled,
 }
 
 impl<'a, 'b> BdxWriter<'a, 'b> {
-    pub(super) fn new(
+    fn new(
         exchange: Exchange<'a>,
         drive: Drive,
         buf: &'b mut [u8],
         max_block_size: u16,
+        state: WriterState,
     ) -> Self {
         // We can never stage more than the buffer holds; negotiation already
         // bounded `max_block_size`, but clamp defensively.
@@ -66,8 +77,32 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
             max_block_size,
             counter: 0,
             block_len: 0,
-            cancelled: false,
+            state,
         }
+    }
+
+    /// Complete a prepared download negotiation by sending `ReceiveAccept`.
+    ///
+    /// If this future is dropped while the acceptance message is in flight, the
+    /// writer remains in the accepting state and can be cancelled. Acceptance
+    /// cannot be retried after it has started.
+    pub async fn accept(&mut self, length: Option<u64>) -> Result<(), Error> {
+        if self.state != WriterState::Negotiating {
+            return Err(ErrorCode::Invalid.into());
+        }
+
+        self.state = WriterState::Accepting;
+        send_accept(
+            &mut self.exchange,
+            true,
+            TransferControl::select(self.drive == Drive::Driver),
+            self.max_block_size as u16,
+            length,
+        )
+        .await?;
+
+        self.state = WriterState::Active;
+        Ok(())
     }
 
     /// Cancel an active transfer and report `TransferFailedUnknownError` to the peer.
@@ -76,13 +111,17 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// must be awaited explicitly. If a pending write future is no longer needed,
     /// drop that future and call `cancel` on the writer it borrowed.
     pub async fn cancel(&mut self) -> Result<(), Error> {
-        if self.cancelled {
-            return Ok(());
+        match self.state {
+            WriterState::Cancelled | WriterState::Finished => return Ok(()),
+            WriterState::Negotiating
+            | WriterState::Accepting
+            | WriterState::Active
+            | WriterState::Finishing => {}
         }
 
         // If sending the report fails or the future is dropped while awaiting it,
         // subsequent writer calls must not emit any more BDX blocks.
-        self.cancelled = true;
+        self.state = WriterState::Cancelled;
 
         // A previous Block may still be awaiting its MRP acknowledgement after
         // the caller dropped `commit`. Drain that send before starting the
@@ -98,12 +137,14 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     }
 
     /// Stage and send `data`, returning the number of bytes accepted (`< data.len()`
-    /// only when the current block fills; call again with the remainder).
+    /// only when the current block fills; call again with the remainder). A full
+    /// block stays staged until more data arrives or the transfer is finished, so
+    /// the final full block can be sent as `BlockEof`.
     ///
     /// This is also the [`embedded_io_async::Write`] implementation; the inherent
     /// method is kept so callers need not import the trait.
     pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
-        if self.cancelled {
+        if self.state != WriterState::Active {
             return Err(ErrorCode::Invalid.into());
         }
 
@@ -111,14 +152,14 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
             return Ok(0);
         }
 
+        if self.block_len == self.max_block_size {
+            self.send_block(false).await?;
+        }
+
         let space = self.max_block_size - self.block_len;
         let n = space.min(data.len());
         self.buf[self.block_len..self.block_len + n].copy_from_slice(&data[..n]);
         self.block_len += n;
-
-        if self.block_len == self.max_block_size {
-            self.send_block(false).await?;
-        }
 
         Ok(n)
     }
@@ -143,7 +184,7 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// Send `len` bytes - previously written into [`block_buf`](Self::block_buf) -
     /// as one block. `len` must not exceed [`max_block_size`](Self::max_block_size).
     pub async fn commit(&mut self, len: usize) -> Result<(), Error> {
-        if self.cancelled {
+        if self.state != WriterState::Active {
             return Err(ErrorCode::Invalid.into());
         }
 
@@ -159,27 +200,34 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
 
     /// Flush the final (possibly empty) block and complete the transfer.
     pub async fn finish(mut self) -> Result<(), Error> {
-        self.send_block(true).await?;
-
-        self.exchange.acknowledge().await
+        let len = self.block_len;
+        self.finish_with_len(len).await
     }
 
     /// Send `len` bytes from [`block_buf`](Self::block_buf) as the final
     /// `BlockEof` and complete the transfer. `len` must not exceed
-    /// [`max_block_size`](Self::max_block_size).
-    pub async fn finish_with_len(mut self, len: usize) -> Result<(), Error> {
-        if self.cancelled || len > self.max_block_size {
+    /// [`max_block_size`](Self::max_block_size). If this future is dropped while
+    /// waiting for the peer's final acknowledgement, call [`cancel`](Self::cancel)
+    /// to report failure and make the writer terminal.
+    pub async fn finish_with_len(&mut self, len: usize) -> Result<(), Error> {
+        if self.state != WriterState::Active || len > self.max_block_size {
             return Err(ErrorCode::Invalid.into());
         }
 
         self.block_len = len;
-        self.finish().await
+        self.state = WriterState::Finishing;
+        self.send_block(true).await?;
+        self.exchange.acknowledge().await?;
+        self.state = WriterState::Finished;
+        Ok(())
     }
 
     /// Send the staged bytes as one block, driving/awaiting acknowledgement per
     /// the negotiated drive mode.
     async fn send_block(&mut self, is_eof: bool) -> Result<(), Error> {
-        if self.cancelled {
+        let allowed_state =
+            self.state == WriterState::Active || (is_eof && self.state == WriterState::Finishing);
+        if !allowed_state {
             return Err(ErrorCode::Invalid.into());
         }
 
@@ -280,6 +328,10 @@ impl embedded_io_async::Write for BdxWriter<'_, '_> {
 
     /// Send any staged-but-unsent bytes as a (non-final) block.
     async fn flush(&mut self) -> Result<(), Self::Error> {
+        if self.state != WriterState::Active {
+            return Err(ErrorCode::Invalid.into());
+        }
+
         if self.block_len > 0 {
             self.send_block(false).await?;
         }
@@ -333,7 +385,7 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
                 } else {
                     Drive::Follower
                 };
-                Ok(BdxWriter::new(self, drive, buf, mbs))
+                Ok(BdxWriter::new(self, drive, buf, mbs, WriterState::Active))
             }
             None => super::nego::abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
         }
@@ -390,14 +442,13 @@ impl<'a> BdxDownloadResponder<'a> {
         self.requested_length
     }
 
-    /// Accept the transfer and start sending, staging blocks in the (non-empty)
-    /// caller-provided buffer `buf` (its length bounds the block size). `length`
-    /// advertises a definite transfer length (enabling the receiver's progress
-    /// reporting) when known.
-    pub async fn reply<'b>(
+    /// Prepare to accept the transfer, staging blocks in the caller-provided
+    /// buffer `buf` (its length bounds the block size). The returned writer is
+    /// still negotiating; call [`BdxWriter::accept`] to send `ReceiveAccept`.
+    /// This split lets the caller cancel even while that message is in flight.
+    pub async fn prepare_reply<'b>(
         mut self,
         buf: &'b mut [u8],
-        length: Option<u64>,
     ) -> Result<BdxWriter<'a, 'b>, Error> {
         if buf.is_empty() {
             // Our staging buffer is unusable, so we can never serve a block. Reject
@@ -426,16 +477,27 @@ impl<'a> BdxDownloadResponder<'a> {
 
         self.exchange.rx_done()?;
 
-        send_accept(
-            &mut self.exchange,
-            true,
-            TransferControl::select(drive == Drive::Driver),
+        Ok(BdxWriter::new(
+            self.exchange,
+            drive,
+            buf,
             mbs,
-            length,
-        )
-        .await?;
+            WriterState::Negotiating,
+        ))
+    }
 
-        Ok(BdxWriter::new(self.exchange, drive, buf, mbs))
+    /// Accept the transfer and start sending, staging blocks in the (non-empty)
+    /// caller-provided buffer `buf` (its length bounds the block size). `length`
+    /// advertises a definite transfer length (enabling the receiver's progress
+    /// reporting) when known.
+    pub async fn reply<'b>(
+        self,
+        buf: &'b mut [u8],
+        length: Option<u64>,
+    ) -> Result<BdxWriter<'a, 'b>, Error> {
+        let mut writer = self.prepare_reply(buf).await?;
+        writer.accept(length).await?;
+        Ok(writer)
     }
 
     /// Reject the transfer with the given status (e.g. `FileDesignatorUnknown`).

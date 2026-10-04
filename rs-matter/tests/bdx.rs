@@ -154,6 +154,351 @@ fn test_bdx_download_streaming() {
     });
 }
 
+struct WriteDownloadResponder {
+    image: Vec<u8>,
+}
+
+impl ExchangeHandler for WriteDownloadResponder {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder
+            .reply(&mut buf, Some(self.image.len() as u64))
+            .await?;
+        write_all(&mut writer, &self.image).await?;
+        let final_len = self.image.len().min(writer.max_block_size());
+        writer.finish_with_len(final_len).await?;
+        assert!(writer.write(b"late").await.is_err());
+        assert!(writer.commit(0).await.is_err());
+        Ok(())
+    }
+}
+
+async fn receive_writer_frames(mut exchange: Exchange<'_>, image: &[u8]) -> Result<(), Error> {
+    let init = bdx::TransferInit {
+        transfer_control: bdx::TransferControl {
+            version: bdx::BDX_VERSION,
+            sender_drive: true,
+            receiver_drive: false,
+            async_mode: false,
+        },
+        range_control: bdx::RangeControl::default(),
+        max_block_size: 256,
+        start_offset: 0,
+        length: 0,
+        file_designator: FILE_DESIGNATOR,
+        metadata: &[],
+    };
+    exchange
+        .send_with(|_, wb| {
+            init.write(wb)?;
+            Ok(Some(bdx::OpCode::ReceiveInit.into()))
+        })
+        .await?;
+
+    exchange.recv_fetch().await?;
+    let accept = bdx::TransferAccept::parse(true, exchange.rx()?.payload())?;
+    assert_eq!(accept.length, image.len() as u64);
+    let block_size = usize::from(accept.max_block_size);
+    exchange.rx_done()?;
+
+    let expected_frames = image.len().div_ceil(block_size).max(1);
+    let final_len = if image.is_empty() {
+        0
+    } else {
+        let tail = image.len() % block_size;
+        if tail == 0 {
+            block_size
+        } else {
+            tail
+        }
+    };
+    let mut received = Vec::new();
+
+    for index in 0..expected_frames {
+        exchange.recv_fetch().await?;
+        let meta = exchange.rx()?.meta();
+        let block = bdx::Block::parse(exchange.rx()?.payload())?;
+        let last = index + 1 == expected_frames;
+        assert_eq!(
+            meta.proto_opcode == bdx::OpCode::BlockEof as u8,
+            last,
+            "unexpected EOF position for {} byte write",
+            image.len()
+        );
+        assert_eq!(block.data.len(), if last { final_len } else { block_size });
+        received.extend_from_slice(block.data);
+        let counter = block.block_counter;
+        exchange.rx_done()?;
+        exchange
+            .send_with(|_, wb| {
+                bdx::BlockQuery {
+                    block_counter: counter,
+                }
+                .write(wb)?;
+                Ok(Some(if last {
+                    bdx::OpCode::BlockAckEof.into()
+                } else {
+                    bdx::OpCode::BlockAck.into()
+                }))
+            })
+            .await?;
+    }
+
+    exchange.acknowledge().await?;
+    assert_eq!(received, image);
+    Ok(())
+}
+
+#[test]
+fn test_bdx_writer_finishes_full_blocks_with_data_eof() {
+    init_env_logger();
+
+    futures_lite::future::block_on(async {
+        let runner = new_default_runner();
+        let image = image_of(256);
+        select(
+            runner.run_responder(WriteDownloadResponder {
+                image: image.clone(),
+            }),
+            async {
+                receive_writer_frames(runner.initiate_exchange().await?, &image).await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+
+    futures_lite::future::block_on(async {
+        let runner = new_default_runner();
+        let image = image_of(512);
+        select(
+            runner.run_responder(WriteDownloadResponder {
+                image: image.clone(),
+            }),
+            async {
+                receive_writer_frames(runner.initiate_exchange().await?, &image).await?;
+                Ok::<_, Error>(())
+            },
+        )
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+struct CancelFinalEofResponder;
+
+impl ExchangeHandler for CancelFinalEofResponder {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder.reply(&mut buf, Some(1)).await?;
+        writer.write(b"x").await?;
+
+        let outcome = {
+            let finish = core::pin::pin!(writer.finish_with_len(1));
+            let delay = core::pin::pin!(Timer::after(Duration::from_secs(1)));
+            select(finish, delay).await
+        };
+        assert!(matches!(outcome, Either::Second(())));
+
+        writer.cancel().await?;
+        assert!(writer.write(b"late").await.is_err());
+        assert!(writer.commit(0).await.is_err());
+        Ok(())
+    }
+}
+
+#[test]
+fn test_bdx_writer_cancel_final_eof_is_terminal() {
+    init_env_logger();
+    let runner = new_default_runner();
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(CancelFinalEofResponder), async {
+            let mut exchange = runner.initiate_exchange().await?;
+            let init = bdx::TransferInit {
+                transfer_control: bdx::TransferControl {
+                    version: bdx::BDX_VERSION,
+                    sender_drive: true,
+                    receiver_drive: false,
+                    async_mode: false,
+                },
+                range_control: bdx::RangeControl {
+                    def_len: true,
+                    start_offset: false,
+                    wide_range: false,
+                },
+                max_block_size: 256,
+                start_offset: 0,
+                length: 1,
+                file_designator: FILE_DESIGNATOR,
+                metadata: &[],
+            };
+            exchange
+                .send_with(|_, wb| {
+                    init.write(wb)?;
+                    Ok(Some(bdx::OpCode::ReceiveInit.into()))
+                })
+                .await?;
+
+            exchange.recv_fetch().await?;
+            assert_eq!(
+                exchange.rx()?.meta().proto_opcode,
+                bdx::OpCode::ReceiveAccept as u8
+            );
+            exchange.rx_done()?;
+
+            exchange.recv_fetch().await?;
+            assert_eq!(
+                exchange.rx()?.meta().proto_opcode,
+                bdx::OpCode::BlockEof as u8
+            );
+            let block = bdx::Block::parse(exchange.rx()?.payload())?;
+            assert_eq!(block.data, b"x");
+            exchange.rx_done()?;
+            // Intentionally omit BlockAckEof so the sender's borrowed finish
+            // future is cancelled while awaiting its application acknowledgement.
+
+            let outcome = select(
+                core::pin::pin!(exchange.recv_fetch()),
+                core::pin::pin!(Timer::after(Duration::from_secs(2))),
+            )
+            .await;
+            match outcome {
+                Either::First(result) => {
+                    result?;
+                }
+                Either::Second(()) => {
+                    panic!("dropping the final acknowledgement wait must send a failure report")
+                }
+            }
+            assert_eq!(
+                exchange.rx()?.meta().proto_id,
+                rs_matter::sc::PROTO_ID_SECURE_CHANNEL
+            );
+            {
+                let mut rb = ReadBuf::new(exchange.rx()?.payload());
+                let status = StatusReport::read(&mut rb)?;
+                assert_eq!(status.general_code, GeneralCode::Failure);
+                assert_eq!(status.proto_id, bdx::PROTO_ID_BDX as u32);
+                assert_eq!(
+                    status.proto_code,
+                    bdx::BdxStatus::TransferFailedUnknownError as u16
+                );
+            }
+            exchange.rx_done()?;
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+struct CancelNegotiationResponder;
+
+impl ExchangeHandler for CancelNegotiationResponder {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let mut buf = [0; 256];
+        let mut writer = responder.prepare_reply(&mut buf).await?;
+        let outcome = {
+            let accept = core::pin::pin!(writer.accept(Some(1)));
+            let delay = core::pin::pin!(Timer::after(Duration::from_millis(250)));
+            select(accept, delay).await
+        };
+        assert!(matches!(outcome, Either::Second(())));
+
+        // The first acceptance attempt is terminal once dropped; retrying must
+        // not send a second ReceiveAccept.
+        assert!(writer.accept(Some(1)).await.is_err());
+        writer.cancel().await?;
+        assert!(writer.write(b"late").await.is_err());
+        assert!(writer.commit(0).await.is_err());
+        Ok(())
+    }
+}
+
+#[test]
+fn test_bdx_writer_cancel_negotiation_is_terminal() {
+    init_env_logger();
+    let runner = new_default_runner();
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(CancelNegotiationResponder), async {
+            let mut exchange = runner.initiate_exchange().await?;
+            let init = bdx::TransferInit {
+                transfer_control: bdx::TransferControl {
+                    version: bdx::BDX_VERSION,
+                    sender_drive: true,
+                    receiver_drive: false,
+                    async_mode: false,
+                },
+                range_control: bdx::RangeControl::default(),
+                max_block_size: 256,
+                start_offset: 0,
+                length: 0,
+                file_designator: FILE_DESIGNATOR,
+                metadata: &[],
+            };
+            exchange
+                .send_with(|_, wb| {
+                    init.write(wb)?;
+                    Ok(Some(bdx::OpCode::ReceiveInit.into()))
+                })
+                .await?;
+
+            exchange.recv_fetch().await?;
+            assert_eq!(
+                exchange.rx()?.meta().proto_opcode,
+                bdx::OpCode::ReceiveAccept as u8
+            );
+            // Keep the received message held until the sender has cancelled its
+            // pending `accept` future and is waiting to drain this MRP ack.
+            Timer::after(Duration::from_millis(500)).await;
+            exchange.rx_done()?;
+            exchange.acknowledge().await?;
+
+            let outcome = select(
+                core::pin::pin!(exchange.recv_fetch()),
+                core::pin::pin!(Timer::after(Duration::from_secs(2))),
+            )
+            .await;
+            match outcome {
+                Either::First(result) => {
+                    result?;
+                }
+                Either::Second(()) => {
+                    panic!("cancelled negotiation must report failure to the peer")
+                }
+            }
+            assert_eq!(
+                exchange.rx()?.meta().proto_id,
+                rs_matter::sc::PROTO_ID_SECURE_CHANNEL
+            );
+            {
+                let mut rb = ReadBuf::new(exchange.rx()?.payload());
+                let status = StatusReport::read(&mut rb)?;
+                assert_eq!(status.general_code, GeneralCode::Failure);
+                assert_eq!(status.proto_id, bdx::PROTO_ID_BDX as u32);
+                assert_eq!(
+                    status.proto_code,
+                    bdx::BdxStatus::TransferFailedUnknownError as u16
+                );
+            }
+            exchange.rx_done()?;
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
 /// Responder that honors a requested start offset: serves `image[start_offset..]`,
 /// advertising only the remaining bytes.
 struct OffsetDownloadResponder<'a> {
