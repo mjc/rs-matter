@@ -37,10 +37,8 @@ use crate::transport::network::{IpAddr, Ipv4Addr, Ipv6Addr};
 /// Build an mDNS browse query: a PTR question against a service type
 /// (e.g. `_matterc._udp.local` or a subtype like `_L840._sub._matterc._udp.local`).
 ///
-/// `name` is any [`ToName`] - the builtin passes a [`NameSlice`] built straight
+/// `name` is any [`ToName`] - the builtin passes an internal `NameSlice` built straight
 /// from labels, so no name buffer is allocated or re-parsed.
-///
-/// [`NameSlice`]: crate::transport::network::mdns::builtin::types::NameSlice
 pub fn build_browse_query(name: impl ToName, buf: &mut [u8]) -> Result<usize, Error> {
     build_query(name, Rtype::PTR, buf)
 }
@@ -185,7 +183,7 @@ impl<'a> Iterator for MdnsTxt<'a> {
 /// or carries no resolvable instance name.
 ///
 /// The returned view borrows the packet buffer and materializes nothing: its
-/// `addrs`/`txt` walk the records on demand (see [`MdnsAddrs`] / [`MdnsTxt`]).
+/// `addrs`/`txt` walk the records on demand (see `MdnsAddrs` / `MdnsTxt`).
 /// Records split across multiple packets are not merged - see
 /// [`MdnsRemoteService`] for the rationale.
 ///

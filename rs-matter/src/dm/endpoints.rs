@@ -39,7 +39,7 @@
 //! stays - or when extra clusters need to be chained into the root endpoint
 //! next to the system ones.
 //!
-//! The root endpoint metadata is the same in all cases: [`root_endpoint!`] lists
+//! The root endpoint metadata is the same in all cases: [`crate::root_endpoint!`] lists
 //! all clusters, as the Descriptor cluster and the Interaction Model dispatch
 //! are driven by the metadata rather than by the shape of the handler chain.
 

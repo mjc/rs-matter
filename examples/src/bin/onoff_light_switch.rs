@@ -166,7 +166,7 @@ fn main() -> Result<(), Error> {
 /// The switch loop: on every line read from stdin (i.e. each time you press
 /// Enter in the console), walk the binding registry and send `OnOff::Toggle` to
 /// each unicast `(node, endpoint)` target on [`SWITCH_ENDPOINT`]. Each
-/// [`Binding`] carries its own `local_endpoint` and `fab_idx`, so no separate
+/// [`binding::Binding`] carries its own `local_endpoint` and `fab_idx`, so no separate
 /// fabric enumeration is needed.
 ///
 /// Driving the toggle by key press (rather than a timer) makes it easy to test

@@ -57,7 +57,7 @@ pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 /// `interactionModelRevision` value emitted on every outgoing IM message
 /// rs-matter sends — both responder-side (ReportData / WriteResponse /
 /// InvokeResponse / StatusResponse / SubscribeResponse, in [`crate::dm`]
-/// and [`status`] / [`attr::subscribe`]) and requestor-side (the client
+/// and `status` / `attr::subscribe`) and requestor-side (the client
 /// builders in [`crate::im::client`] and [`TimedReq`]).
 ///
 /// The TLV context tag it is emitted under is [`IM_REVISION_TAG`] (= `0xFF`).

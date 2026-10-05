@@ -183,7 +183,7 @@ impl<'a> Matter<'a> {
     /// * dev_det: An object of type [BasicInfoConfig].
     /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
     ///   data required for the device.
-    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
+    /// * dev_att: An object that implements the trait [`DeviceAttestation`]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
     /// * port: The port number on which the Matter stack will listen for incoming connections.
@@ -235,7 +235,7 @@ impl<'a> Matter<'a> {
     /// * dev_det: An object of type [BasicInfoConfig].
     /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
     ///   data required for the device.
-    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
+    /// * dev_att: An object that implements the trait [`DeviceAttestation`]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
     /// * port: The port number on which the Matter stack will listen for incoming connections.
@@ -560,9 +560,9 @@ impl<'a> Matter<'a> {
     /// Note that this is emphatically *not* "the device is commissioned": a fabric is created
     /// as soon as `AddNOC` is received, which is well before the commissioner has established a
     /// CASE session over the operational network and sent `CommissioningComplete`. Code that
-    /// needs to know whether commissioning is still in progress should use
-    /// [`Matter::is_comm_window_open`] instead, as the commissioning window stays open for exactly
-    /// that long.
+    /// needs to know whether commissioning is still in progress should inspect
+    /// [`Matter::comm_window_state`](Self::comm_window_state), since the commissioning window stays
+    /// open for exactly that long.
     pub fn has_fabrics(&self) -> bool {
         self.with_state(|state| state.fabrics.iter().next().is_some())
     }

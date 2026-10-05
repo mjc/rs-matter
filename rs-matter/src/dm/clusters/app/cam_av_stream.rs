@@ -442,7 +442,7 @@ where
     }
 
     /// Increment the reference count of an allocated video stream so
-    /// that [`Self::deallocate_video`] cannot remove it underneath the
+    /// that a deallocation request cannot remove it underneath the
     /// caller. Cross-cluster consumers (WebRTC, PushAV) MUST pair this
     /// with [`Self::release_video`] when their session ends.
     ///

@@ -32,7 +32,7 @@
 //! applied - lives in those user implementations, not here: the registry decides
 //! per query (see [`OtaImagesRegistry::query`] and
 //! [`OtaImageMeta::user_consent_needed`]), and consent can be layered onto an
-//! existing registry (e.g. the [`dcl`] sample) with a thin wrapping proxy.
+//! existing registry (e.g. the `dcl` sample) with a thin wrapping proxy.
 
 use core::fmt::Write as _;
 use core::num::NonZeroU8;
@@ -164,7 +164,7 @@ pub enum OtaApplyOutcome {
 /// - **Provider-side, at apply** - [`apply`](Self::apply) returns
 ///   [`OtaApplyOutcome::Await`] until consent is granted, then [`OtaApplyOutcome::Proceed`].
 ///
-/// A common way to add consent on top of an existing registry (e.g. the [`dcl`]
+/// A common way to add consent on top of an existing registry (e.g. the `dcl`
 /// sample) is a thin proxy that wraps it and overrides these decisions.
 pub trait OtaImagesRegistry {
     /// Decide what to offer a requestor querying for an image newer than
@@ -472,7 +472,7 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 ///
 /// Given the exchange handler for the rest of your protocols (e.g. the default
 /// Interaction Model + Secure Channel chain), add BDX with
-/// [`ExchangeHandler::chain`](crate::respond::ExchangeHandler::chain):
+/// `ExchangeHandler::chain`:
 ///
 /// ```ignore
 /// use rs_matter::bdx::{Bdx, PROTO_ID_BDX};

@@ -839,14 +839,16 @@ impl<'a> CertRef<'a> {
 
     /// Start a chain verification of this certificate.
     ///
-    /// Every cert added to the chain (the leaf here, intermediates via
-    /// [`CertVerifier::add_cert`], and the self-signed root via
-    /// [`CertVerifier::finalise`]) is checked against `lkg_utc_secs`
-    /// for its `NotBefore` / `NotAfter` validity window, per Matter
-    /// Core spec which mandates use of the Last-Known-Good UTC
-    /// Time when no live trusted real-time-clock value is available.
-    /// Callers snapshot the value from
-    /// [`crate::Matter::last_known_utc_time`] (Matter-epoch seconds).
+    /// The supplied [`UtcTime`] is carried through the chain. Each certificate
+    /// is checked as the chain is extended and finalized against its validity
+    /// window: `NotAfter` is checked against either the reliable time or the
+    /// Last-Known-Good value, while `NotBefore` is checked only when the time is
+    /// reliable. A `NotAfter` value of zero is unconstrained. The checks use
+    /// Matter-epoch seconds, converted from the microseconds in `UtcTime`.
+    ///
+    /// Snapshot the value from
+    /// [`Rtc::utc_time`](crate::dm::clusters::time_sync::Rtc::utc_time) through
+    /// [`Matter::with_state`](crate::Matter::with_state).
     pub fn verify_chain_start<C: Crypto>(
         &'a self,
         crypto: C,

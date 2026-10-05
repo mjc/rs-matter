@@ -70,7 +70,7 @@ pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
 ///
 /// This is the central buffer type that both [`IMBuffer`](crate::im::IMBuffer)
 /// and [`BdxBuffer`](crate::bdx::BdxBuffer) alias, so a single
-/// [`PooledBuffers`](crate::utils::storage::pooled::PooledBuffers) pool can be
+/// [`PooledBuffers`] pool can be
 /// shared across the data model and BDX.
 pub type Buffer = crate::utils::storage::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 

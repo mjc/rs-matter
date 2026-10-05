@@ -29,7 +29,7 @@ use crate::utils::sync::blocking::raw::MatterRawMutex;
 
 use super::signal::Signal;
 
-/// Error returned by [`Mutex::try_lock`]
+/// Error returned by [`IfMutex::try_lock`]
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TryLockError;

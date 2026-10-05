@@ -429,7 +429,7 @@ const TRIGGER_ENDPOINT_MASK: u64 = 0xFFFF << 32;
 const FAKE_POWER_OFFSETS_MW: [i64; 4] = [-18_000, -6_000, 6_000, 18_000];
 const FAKE_VOLTAGE_OFFSETS_MV: [i64; 4] = [-900, -300, 300, 900];
 
-/// What a measurement tick moved, as [`HeatingElement::accumulate`] reports it.
+/// Which readings changed when the heating element closes a measurement period.
 ///
 /// The two readings do not move together: the lifetime counter only changes
 /// when the running total crosses a whole milliwatt-hour, while a measurement

@@ -88,7 +88,7 @@ impl BuiltinMdns {
     ///
     /// On a single shared socket, this concurrently:
     /// - broadcasts the local Matter services and answers inbound queries about them,
-    /// - services [`Transport::resolve`](crate::transport::Transport::resolve) requests, and
+    /// - services `Transport::resolve` requests, and
     /// - services [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
     ///   requests,
     ///

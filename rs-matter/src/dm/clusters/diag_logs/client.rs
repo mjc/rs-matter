@@ -18,9 +18,10 @@
 //! The Diagnostic Logs cluster *client* side (the controller fetching logs).
 //!
 //! The client sends `RetrieveLogsRequest` via the generated `DiagnosticLogsClient`
-//! proxy on an [`Exchange`](crate::transport::exchange::Exchange); when the server
+//! proxy on an [`crate::transport::exchange::Exchange`]; when the server
 //! answers a `BDX` request by pushing the log over BDX, the client receives it
-//! with [`DiagLogsBdxHandler`] - a [`BdxHandler`] it chains into its responder,
+//! with [`crate::dm::clusters::diag_logs::client::DiagLogsBdxHandler`] - a
+//! [`crate::bdx::BdxHandler`] it chains into its responder,
 //! the mirror of the server-side
 //! [`OtaBdxHandler`](crate::dm::clusters::ota_prov::OtaBdxHandler).
 

@@ -51,7 +51,7 @@ const P256_PUBLIC_KEY_LEN: usize = PKC_CANON_PUBLIC_KEY_LEN;
 ///   parameters ANY DEFINED BY algorithm OPTIONAL
 /// }
 ///
-/// https://www.rfc-editor.org/rfc/rfc5280#appendix-A.1
+/// <https://www.rfc-editor.org/rfc/rfc5280#appendix-A.1>
 #[derive(Sequence)]
 pub struct AlgorithmIdentifier<'a> {
     pub algorithm: ObjectIdentifier,
@@ -62,7 +62,7 @@ pub struct AlgorithmIdentifier<'a> {
 ///   algorithm        AlgorithmIdentifier,
 ///   subjectPublicKey BIT STRING
 /// }
-/// https://www.rfc-editor.org/rfc/rfc5280#appendix-A.1
+/// <https://www.rfc-editor.org/rfc/rfc5280#appendix-A.1>
 struct SubjectPublicKeyInfo<'a> {
     algorithm: AlgorithmIdentifier<'a>,
     subject_public_key: BitStringRef<'a>,
@@ -117,7 +117,7 @@ fn default_false() -> bool {
 ///   encipherOnly       (7),
 ///   decipherOnly       (8)
 /// }
-/// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3
+/// <https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3>
 pub mod key_usage_der {
     pub const DIGITAL_SIGNATURE: u16 = 0x8000;
     pub const NON_REPUDIATION: u16 = 0x4000;

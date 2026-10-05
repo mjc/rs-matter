@@ -129,7 +129,7 @@ impl<'a> EncodeValue for ContentInfo<'a> {
 ///   eContent [0] EXPLICIT OCTET STRING
 /// }
 ///
-/// https://www.rfc-editor.org/rfc/rfc5652#section-5.2
+/// <https://www.rfc-editor.org/rfc/rfc5652#section-5.2>
 #[derive(Sequence)]
 struct EncapsulatedContentInfo<'a> {
     econtent_type: ObjectIdentifier,
@@ -317,7 +317,7 @@ impl<'a> CmsSignedData<'a> {
     /// encapsulated CD content, and ECDSA signature (converted from DER to raw).
     ///
     /// Expects the profiled CMS structure used by Matter CDs (Matter Spec):
-    /// https://www.rfc-editor.org/rfc/rfc5652#section-5.2
+    /// <https://www.rfc-editor.org/rfc/rfc5652#section-5.2>
     /// ```text
     /// ContentInfo ::= SEQUENCE {
     ///   contentType OBJECT IDENTIFIER id-signedData (1.2.840.113549.1.7.2),

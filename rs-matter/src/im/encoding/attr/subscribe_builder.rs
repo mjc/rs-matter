@@ -189,8 +189,8 @@ where
     P: TLVBuilderParent,
 {
     /// Open the optional `AttributeRequests` array. Each `.push()`
-    /// yields an [`AttrPathBuilder`]; close with `.end()` to advance
-    /// to the next message field.
+    /// yields an [`AttrPathBuilder`](crate::im::encoding::attr::AttrPathBuilder);
+    /// close with `.end()` to advance to the next message field.
     pub fn attr_requests(self) -> Result<AttrPathArrayBuilder<SubscribeReqBuilder<P, 4>>, Error> {
         AttrPathArrayBuilder::new(
             SubscribeReqBuilder { p: self.p },

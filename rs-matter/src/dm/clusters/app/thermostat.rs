@@ -22,7 +22,7 @@
 //!
 //! Each temperature's four setpoint limits are individually optional, but the
 //! clamping and `CONSTRAINT_ERROR` rules are expressed in terms of them, so
-//! [`ThermostatHandler::validate`] demands all four or none.
+//! Startup lifecycle validation demands all four or none.
 //!
 //! Not implemented: `OCC` and the unoccupied setpoints; `MSCH`, `PRES` and
 //! `TSUGGEST`, which need time synchronization and bring
@@ -65,8 +65,8 @@ pub use crate::dm::clusters::decl::thermostat::*;
 const CLUSTER_REVISION: u16 = 11;
 
 /// Features this handler serves; anything else in a
-/// [`ThermostatHooks::CLUSTER`] FeatureMap is rejected by
-/// [`ThermostatHandler::validate`]. `EVENTS` is provisional - see the module
+/// [`ThermostatHooks::CLUSTER`] FeatureMap is rejected during Startup
+/// lifecycle validation. `EVENTS` is provisional - see the module
 /// docs.
 const SUPPORTED_FEATURES: u32 = Feature::HEATING.bits()
     | Feature::COOLING.bits()
@@ -549,7 +549,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 
     /// Whether the user-configurable heating limits are served. All four or
-    /// none - [`Self::validate`] enforces that.
+    /// none - Startup lifecycle validation enforces that.
     fn has_heat_limits() -> bool {
         Self::serves(AttributeId::MinHeatSetpointLimit)
     }
@@ -1103,7 +1103,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     /// They record `External` as they happen, so whatever is left came from
     /// the device itself - the knob on the front panel - and is `Manual`.
     /// `Schedule` is unreachable: it needs `MSCH`, which
-    /// [`Self::validate`] rejects.
+    /// handler configuration rejects.
     fn attribute_local_setpoint_change(&self, notifier: &impl AttrChangeNotifier) {
         let current = self.served_setpoints();
 
@@ -1274,8 +1274,8 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 
     /// `OccupiedHeatingSetpoint` write: out of range is a
-    /// `CONSTRAINT_ERROR`, in contrast to `SetpointRaiseLower`, which clamps -
-    /// see [`Self::raise_lower_setpoint`].
+    /// `CONSTRAINT_ERROR`, in contrast to `SetpointRaiseLower`, which clamps
+    /// the adjustment to the active setpoint limits.
     fn write_occupied_heating_setpoint(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1292,7 +1292,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 
     /// `OccupiedCoolingSetpoint` write - the mirror image of
-    /// [`Self::write_occupied_heating_setpoint`].
+    /// write the occupied heating setpoint through the device logic.
     fn write_occupied_cooling_setpoint(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1342,7 +1342,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 
     /// `MaxHeatSetpointLimit` write - the mirror image of
-    /// [`Self::write_min_heat_setpoint_limit`].
+    /// write the minimum heating setpoint limit through the device logic.
     fn write_max_heat_setpoint_limit(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1369,7 +1369,7 @@ impl<H: ThermostatHooks> ThermostatHandler<H> {
     }
 
     /// `MinCoolSetpointLimit` write - the cooling half of
-    /// [`Self::write_min_heat_setpoint_limit`].
+    /// write the minimum heating setpoint limit through the device logic.
     fn write_min_cool_setpoint_limit(
         &self,
         notifier: impl AttrChangeNotifier,
@@ -1997,7 +1997,7 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
         Ok(self.attrs().system_mode)
     }
 
-    /// See [`Self::running_mode`].
+    /// See the mode derived from the current operating state.
     fn thermostat_running_mode(
         &self,
         _ctx: impl ReadContext,
@@ -2013,7 +2013,7 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
     /// Who or what determined the current setpoint.
     ///
     /// Only ever `Manual` or `External` here: `Schedule` needs `MSCH`, which
-    /// [`Self::validate`] rejects.
+    /// handler configuration rejects.
     fn setpoint_change_source(
         &self,
         _ctx: impl ReadContext,
@@ -2038,7 +2038,8 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
 
     // Attribute writes
 
-    /// See [`Self::write_occupied_heating_setpoint`].
+    /// Write the occupied heating setpoint through the handler's standard
+    /// validation and persistence path.
     fn set_occupied_heating_setpoint(
         &self,
         ctx: impl WriteContext,
@@ -2049,7 +2050,8 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
         self.write_occupied_heating_setpoint(&ctx, value)
     }
 
-    /// See [`Self::write_occupied_cooling_setpoint`].
+    /// Write the occupied cooling setpoint through the handler's standard
+    /// validation and persistence path.
     fn set_occupied_cooling_setpoint(
         &self,
         ctx: impl WriteContext,
@@ -2060,28 +2062,32 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
         self.write_occupied_cooling_setpoint(&ctx, value)
     }
 
-    /// See [`Self::write_min_heat_setpoint_limit`].
+    /// Write the minimum heating setpoint limit through the handler's standard
+    /// validation and persistence path.
     fn set_min_heat_setpoint_limit(&self, ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
         self.write_min_heat_setpoint_limit(&ctx, value)
     }
 
-    /// See [`Self::write_max_heat_setpoint_limit`].
+    /// Write the maximum heating setpoint limit through the handler's standard
+    /// validation and persistence path.
     fn set_max_heat_setpoint_limit(&self, ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
         self.write_max_heat_setpoint_limit(&ctx, value)
     }
 
-    /// See [`Self::write_min_cool_setpoint_limit`].
+    /// Write the minimum cooling setpoint limit through the handler's standard
+    /// validation and persistence path.
     fn set_min_cool_setpoint_limit(&self, ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
         self.write_min_cool_setpoint_limit(&ctx, value)
     }
 
-    /// See [`Self::write_max_cool_setpoint_limit`].
+    /// Write the maximum cooling setpoint limit through the handler's standard
+    /// validation and persistence path.
     fn set_max_cool_setpoint_limit(&self, ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.arm_clock(&ctx);
 
@@ -2106,14 +2112,14 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
         Ok(())
     }
 
-    /// See [`Self::write_system_mode`].
+    /// Write the system mode through the handler's standard feature checks.
     fn set_system_mode(&self, ctx: impl WriteContext, value: SystemModeEnum) -> Result<(), Error> {
         self.write_system_mode(&ctx, value)
     }
 
     // Commands
 
-    /// See [`Self::raise_lower_setpoint`].
+    /// Apply the requested setpoint adjustment, clamped to the active limits.
     fn handle_setpoint_raise_lower(
         &self,
         ctx: impl InvokeContext,
@@ -2202,8 +2208,8 @@ impl<H: ThermostatHooks> ClusterHandler for ThermostatHandler<H> {
 /// initial value of each attribute the handler persists. Everything defaults,
 /// so a heating-only device implements only the heating side.
 pub trait ThermostatHooks {
-    /// The features, attributes and commands this instance serves. See
-    /// [`ThermostatHandler::validate`] for what a valid configuration is.
+    /// The features, attributes and commands this instance serves. Startup
+    /// lifecycle validation checks that the configuration is valid.
     const CLUSTER: Cluster<'static>;
 
     /// `AbsMinHeatSetpointLimit`, in 0.01°C: the manufacturer's floor under
@@ -2225,8 +2231,8 @@ pub trait ThermostatHooks {
     const MIN_SETPOINT_DEAD_BAND: i8 = 20;
 
     /// `ControlSequenceOfOperation`. A const because writes are silently
-    /// ignored; it has to agree with the `HEAT` and `COOL` features - see
-    /// [`ThermostatHandler::validate`].
+    /// ignored; Startup lifecycle validation checks that it agrees with the
+    /// `HEAT` and `COOL` features.
     const CONTROL_SEQUENCE_OF_OPERATION: ControlSequenceOfOperationEnum =
         ControlSequenceOfOperationEnum::HeatingOnly;
 
@@ -2369,11 +2375,11 @@ pub mod test {
     const TICK: Duration = Duration::from_secs(5);
 
     /// How fast the room warms towards the setpoint while heating, in 0.01°C
-    /// per [`TICK`].
+    /// per tick.
     const HEATING_RATE: i16 = 20;
 
-    /// How fast the room cools towards [`AMBIENT`] while idle, in 0.01°C per
-    /// [`TICK`].
+    /// How fast the room cools towards its ambient temperature while idle, in
+    /// 0.01°C per tick.
     const COOLING_RATE: i16 = 10;
 
     /// The temperature the simulated room drifts to with the heating off.
@@ -2399,7 +2405,7 @@ pub mod test {
     }
 
     impl TestThermostatDeviceLogic {
-        /// Idle at [`AMBIENT`], with a 20.00°C setpoint.
+        /// Idle at the test ambient temperature, with a 20.00°C setpoint.
         pub const fn new() -> Self {
             Self {
                 state: Mutex::new(RefCell::new(TestThermostatState {
@@ -2485,7 +2491,7 @@ pub mod test {
                     | thermostat_cluster::EventId::RunningStateChange
             ));
 
-        /// Idle at [`AMBIENT`], with a 20.00°C setpoint.
+        /// Idle at the test ambient temperature, with a 20.00°C setpoint.
         const OCCUPIED_HEATING_SETPOINT: i16 = 2000;
 
         // Tests restart the device right after a change, so persist at once.

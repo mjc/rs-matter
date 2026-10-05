@@ -896,7 +896,7 @@ impl AclEntry {
     ///
     /// `aux_acl_enabled` conveys whether the node advertises the Access Control
     /// cluster's `AUXILIARY` feature, which changes how wildcard-target
-    /// Group-auth entries are evaluated - see [`Self::match_access_desc`].
+    /// Group-auth entries are evaluated - see `match_access_desc`.
     pub fn allow(&self, req: &AccessReq, aux_acl_enabled: bool) -> bool {
         self.match_accessor(req.accessor) && self.match_access_desc(&req.object, aux_acl_enabled)
     }

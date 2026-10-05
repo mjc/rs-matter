@@ -733,10 +733,9 @@ impl<T, const N: usize> Vec<T, N> {
     /// worst-case performance of *O*(*n*). If you don't need the order of
     /// elements to be preserved, use [`swap_remove`] instead. If you'd like to
     /// remove elements from the beginning of the `Vec`, consider using
-    /// [`Deque::pop_front`] instead.
+    /// a deque’s `pop_front` method instead.
     ///
     /// [`swap_remove`]: Vec::swap_remove
-    /// [`Deque::pop_front`]: crate::Deque::pop_front
     ///
     /// # Panics
     ///

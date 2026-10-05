@@ -88,15 +88,19 @@ pub const BINDINGS_KEY: u16 = USER_LABELS_KEY + 1;
 
 /// The key used for storing the Last-Known-Good UTC Time value
 /// (Matter Core spec). A single u64 Matter-epoch microseconds
-/// payload, updated synchronously from
-/// [`crate::Matter::set_utc_time`].
+/// payload. [`Rtc::set_utc_time`](crate::dm::clusters::time_sync::Rtc::set_utc_time)
+/// changes the in-memory clock only. The trusted-time-source client uses an
+/// internal persistence-aware update that writes this key only when the new
+/// time differs from the last persisted value by at least one day.
 pub const LKG_UTC_KEY: u16 = BINDINGS_KEY + 1;
 
 /// The key used for storing the Trusted Time Source configured by
 /// the `SetTrustedTimeSource` command (Matter Core spec).
 /// A single 11-byte payload: `[fab_idx:1 | node_id:8 (LE) | endpoint:2 (LE)]`,
-/// updated synchronously from [`crate::Matter::set_trusted_time_source`].
-/// The key is absent on disk when no trusted source is configured.
+/// persisted by Time Synchronization command handling when the configured
+/// source changes. The key is absent on disk when no trusted source is
+/// configured. Calling [`Rtc::set_trusted_time_source`](crate::dm::clusters::time_sync::Rtc::set_trusted_time_source)
+/// directly changes only the in-memory RTC state.
 pub const TRUSTED_TIME_SOURCE_KEY: u16 = LKG_UTC_KEY + 1;
 
 /// The key used for storing the entire Scenes Management cluster
@@ -121,9 +125,9 @@ pub const ICD_REGISTERED_CLIENTS_KEY: u16 = OTA_PROVIDERS_KEY + 1;
 pub const ICD_CHECK_IN_COUNTER_KEY: u16 = ICD_REGISTERED_CLIENTS_KEY + 1;
 
 /// The key used for storing the CASE session resumption cache — a
-/// single TLV blob holding up to
-/// [`MAX_RESUMPTION_RECORDS`](crate::sc::case::MAX_RESUMPTION_RECORDS)
-/// entries. Re-persisted by the background snapshot task whenever the
+/// single TLV blob holding up to the configured CASE resumption capacity.
+/// When the `case-resumption` feature is enabled, that capacity is
+/// `MAX_RESUMPTION_RECORDS`. Re-persisted by the background snapshot task whenever the
 /// in-memory cache diverges from what was last written.
 pub const CASE_RESUMPTION_KEY: u16 = ICD_CHECK_IN_COUNTER_KEY + 1;
 
@@ -150,7 +154,7 @@ pub const REBOOT_COUNT_KEY: u16 = GROUP_DATA_COUNTER_KEY + 1;
 /// The first key past the singleton keys above - i.e. the next free slot for
 /// a *new* singleton key.
 ///
-/// Only used by [`SINGLETON_KEYS_FIT`] to prove that the singleton block has
+/// Only used by `SINGLETON_KEYS_FIT` to prove that the singleton block has
 /// not grown into [`PERSISTENT_SUBSCRIPTIONS_START`]; bump the key it is
 /// derived from whenever a singleton is added.
 const SINGLETON_KEYS_END: u16 = REBOOT_COUNT_KEY + 1;
@@ -170,7 +174,7 @@ const SINGLETON_KEYS_END: u16 = REBOOT_COUNT_KEY + 1;
 /// singleton key silently shifts every persisted subscription onto a different
 /// key, so a device upgrading to a newer firmware would read another record's
 /// bytes - or would lose its subscriptions. New singleton keys therefore grow
-/// *into the gap* below this anchor, and [`SINGLETON_KEYS_FIT`] turns
+/// *into the gap* below this anchor, and `SINGLETON_KEYS_FIT` turns
 /// exhausting that gap into a compile error rather than silent corruption.
 pub const PERSISTENT_SUBSCRIPTIONS_START: u16 =
     PERSISTENT_SUBSCRIPTIONS_END - MAX_PERSISTED_SUBSCRIPTIONS as u16;

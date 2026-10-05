@@ -18,12 +18,12 @@
 //! Time Synchronization initiator-side client (Matter Core spec).
 //!
 //! Refreshes the device's
-//! [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time) by
+//! Last-Known-Good UTC Time by
 //! opening a CASE-secured exchange to the configured
-//! [Trusted Time Source](crate::Matter::trusted_time_source) (set via
+//! Trusted Time Source (set via
 //! the `SetTrustedTimeSource` command, Matter Core spec),
 //! reading its `UTCTime` attribute, and calling
-//! [`Matter::set_utc_time`] with the result.
+//! [`crate::dm::clusters::time_sync::Rtc::set_utc_time`] with the result.
 //!
 //! Drive it from your application's async runtime:
 //!
@@ -103,7 +103,7 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
     /// - Otherwise opens a CASE-secured initiator exchange to the
     ///   configured `(fab_idx, node_id)`, reads the `UTCTime` attribute
     ///   on the configured `endpoint`, and on a non-null result calls
-    ///   [`Matter::set_utc_time`] with
+    ///   [`crate::dm::clusters::time_sync::Rtc::set_utc_time`] with
     ///   `Granularity = SecondsGranularity` and
     ///   `TimeSource = NodeTimeCluster` (per spec — the source
     ///   that this device used to sync its time was another node's

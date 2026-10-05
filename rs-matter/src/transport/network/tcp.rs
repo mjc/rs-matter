@@ -29,7 +29,7 @@
 //! # Connection Management
 //!
 //! The [`TcpNetwork`] struct manages:
-//! - A [`TcpListener`](std::net::TcpListener) for accepting incoming connections.
+//! - A [`TcpListener`] for accepting incoming connections.
 //! - A pool of active TCP connections (both accepted and outgoing), keyed by remote [`SocketAddr`].
 //!
 //! When sending, if no connection exists to the target address, one is established on-the-fly.
@@ -42,7 +42,7 @@
 //! required by [`TransportRunner::run`](crate::transport::TransportRunner::run) which takes separate
 //! `NetworkSend` and `NetworkReceive` implementations.
 //!
-//! Interior mutability is achieved via [`Mutex`](crate::utils::sync::blocking::Mutex)`<`[`RefCell`](crate::utils::cell::RefCell)`<...>>`,
+//! Interior mutability is achieved via [`Mutex`]`<`[`RefCell`]`<...>>`,
 //! following the same pattern as the BTP transport.
 //!
 //! # I/O Multiplexing

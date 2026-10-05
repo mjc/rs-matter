@@ -92,7 +92,7 @@ pub struct DeviceLoad {
 }
 
 /// Interaction-Model state threaded down to cluster handlers via
-/// [`HandlerContext::im_stats`](crate::dm::HandlerContext::im_stats).
+/// [`HandlerContext::im_stats`].
 ///
 pub trait ImStats {
     /// The node's resource-utilisation metrics, for
@@ -149,7 +149,7 @@ where
 /// folding them behind a single mutex is a possible later refinement.
 ///
 /// `N` is the (raw) [`Networks`] implementation — e.g.
-/// [`EthNetwork`](crate::dm::networks::eth::EthNetwork) or
+/// [`EthNetwork`] or
 /// [`WirelessNetworks`](crate::dm::networks::wireless::WirelessNetworks); it is
 /// wrapped internally in a [`SharedNetworks`] so the data model and (later) the
 /// wireless manager can share it. `NS`/`NE` bound the subscription table and the

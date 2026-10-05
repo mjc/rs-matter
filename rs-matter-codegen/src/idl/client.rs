@@ -25,7 +25,7 @@
 //!
 //! Output shape, per cluster:
 //!
-//! ```ignore
+//! ```text
 //! pub trait <ClusterName>CmdRequests<P>: Sized
 //! where
 //!     P: TLVBuilderParent,
@@ -848,37 +848,30 @@ fn write_responses_trait(cluster: &Cluster, context: &IdlGenerateContext) -> Tok
     )
 }
 
-/// Emit the high-level `<ClusterName>Client<'a>` trait + blanket impl
-/// on [`Exchange<'a>`]. One method per command / attribute, hiding
-/// the full IM transaction (sender, retransmit loop, response chunk
-/// iteration, status-only handling) behind a single async call.
+/// Emit the high-level `<ClusterName>Client` extension trait and
+/// cluster-scoped view over an exchange. The view handles request building,
+/// retransmits, response iteration and status-only completion.
 ///
 /// Output shape, per cluster:
 ///
-/// ```ignore
-/// pub trait <ClusterName>Client<'a>: ImClient<'a> {
-///     // DefaultSuccess command, parameterized:
-///     async fn <cluster>_<cmd><F>(self, ep: EndptId, request: F) -> Result<(), Error>
-///     where F: FnMut(<Cmd>RequestBuilder<...>) -> Result<<parent>, Error>;
-///
-///     // DefaultSuccess command, empty-request:
-///     async fn <cluster>_<cmd>(self, ep: EndptId) -> Result<(), Error>;
-///
-///     // Scalar attribute read:
-///     async fn <cluster>_<attr>_read(self, ep: EndptId) -> Result<T, Error>;
-///
-///     // Scalar attribute write:
-///     async fn <cluster>_<attr>_write(self, ep: EndptId, value: T) -> Result<(), Error>;
+/// ```text
+/// pub trait <ClusterName>Client {
+///     fn <cluster>(self) -> <ClusterName>ClientView<'a>;
 /// }
-/// impl<'a> <ClusterName>Client<'a> for Exchange<'a> {}
+/// impl <ClusterName>Client for Exchange<'a> {}
+///
+/// impl <ClusterName>ClientView<'a> {
+///     async fn <command>(self, ep: EndptId, ...) -> Result<..., Error>;
+///     async fn <scalar_attr>_read(self, ep: EndptId) -> Result<T, Error>;
+///     async fn <borrowed_attr>_read_with(self, ep: EndptId, f: ...) -> Result<R, Error>;
+///     async fn <attr>_write(self, ep: EndptId, ...) -> Result<(), Error>;
+/// }
 /// ```
 ///
-/// Commands that return a real `*Response` struct (i.e. `cmd.output
-/// != "DefaultSuccess"`) and attributes whose type is non-scalar
-/// (structs / lists / strings) are *not* surfaced through this
-/// trait — callers fall back to `ImClient::invoke_with` /
-/// `read_with` / `write_with` plus the per-cluster `*CmdRequests` /
-/// `*AttrReads` / `*AttrWrites` extension traits for those cases.
+/// Response-bearing commands return a handle that borrows the exchange's
+/// RX buffer. The caller reads the response and completes the handle to
+/// acknowledge it. Non-scalar attribute reads use a callback so borrowed
+/// strings, structures and lists cannot outlive the response buffer.
 fn client_trait(
     cluster: &Cluster,
     entities: &EntityContext,
@@ -1082,7 +1075,7 @@ fn client_trait(
         let resp_ty = ident(output);
         let handle_ty = ident(&format!("{output}Handle"));
         let handle_doc = Literal::string(&format!(
-            "Single-shot handle wrapping the [`InvokeRespChunk`] of a `{output}` \
+            "Single-shot handle wrapping the [`{krate}::im::client::InvokeRespChunk`] of a `{output}` \
              response. Holds the exchange's RX buffer alive; `response()` \
              parses the embedded `CommandDataIB` into a borrowed \
              [`{output}`]. The trailing `StatusResponse(Success)` is sent \

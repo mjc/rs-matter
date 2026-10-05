@@ -27,7 +27,7 @@
 //! [`ScenesState`] holds the per-device scene table and per-fabric
 //! `CurrentScene` bookkeeping; the table is persisted as a single
 //! TLV blob under [`SCENES_KEY`] on every successful mutation, and
-//! re-hydrated on startup via [`ScenesState::load_persist`], driven by
+//! re-hydrated on startup via `ScenesState::load_persist`, driven by
 //! the [`LifecycleOp::Startup`] lifecycle operation the handler receives
 //! (deliver it by calling `InteractionModel::startup` once at startup).
 //!

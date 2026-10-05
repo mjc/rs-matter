@@ -177,7 +177,7 @@ pub struct SolicitOutcome {
 ///
 /// The SDP Answer itself is buffered by the hooks implementation and
 /// pushed asynchronously via [`OutboundWork::Answer`] /
-/// [`WebRtcHooks::fill_answer`].
+/// [`WebRtcHooks::take_answer_sdp`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AnswerOutcome {
@@ -211,7 +211,7 @@ pub enum OutboundWork {
     },
     /// `WebRTCTransportRequestor::Answer` — push the SDP Answer for a
     /// session whose Offer arrived via `ProvideOffer`. The handler
-    /// invokes [`WebRtcHooks::fill_answer`] to obtain the SDP bytes.
+    /// invokes [`WebRtcHooks::take_answer_sdp`] to obtain the SDP bytes.
     Answer {
         /// Target session.
         session_id: u16,
@@ -237,7 +237,7 @@ pub enum OutboundWork {
 /// Receiver for [`WebRtcHooks::take_ice_candidates`]. The hook pushes
 /// one candidate SDP string at a time; storage (size, layout, backing
 /// allocator) is owned by the caller — typically
-/// [`WebRtcProvHandler::push_outbound`], which stack-allocates a
+/// the outbound handler path, which stack-allocates a
 /// bounded buffer for the duration of one outbound `IceCandidates`
 /// invoke.
 pub trait IceCandidateSink {

@@ -33,8 +33,8 @@
 //! `NumberOfMeasurementTypes` is its length rather than a free-standing
 //! number, so the two cannot drift apart.
 //!
-//! One of `DC` and `AC` must be selected and `PowerMode` has to agree, both
-//! enforced by [`ElecPwrMeasHandler::validate`].
+//! One of `DC` and `AC` must be selected and `PowerMode` has to agree;
+//! Startup lifecycle validation enforces both.
 //!
 //! There are no commands. The single event, `MeasurementPeriodRanges`, is
 //! mandatory only given the optional `Ranges` attribute, which is not served -
@@ -64,9 +64,8 @@ pub use crate::dm::clusters::decl::electrical_power_measurement::*;
 
 const CLUSTER_REVISION: u16 = 3;
 
-/// Features this handler serves; anything else in an
-/// [`ElecPwrMeasHooks::CLUSTER`] FeatureMap is rejected by
-/// [`ElecPwrMeasHandler::validate`].
+/// Features this handler serves; Startup lifecycle validation rejects any
+/// other bits in [`ElecPwrMeasHooks::CLUSTER`]'s FeatureMap.
 const SUPPORTED_FEATURES: u32 =
     Feature::DIRECT_CURRENT.bits() | Feature::ALTERNATING_CURRENT.bits();
 
@@ -420,7 +419,7 @@ impl<H: ElecPwrMeasHooks> ClusterHandler for ElecPwrMeasHandler<H> {
     // Attribute accessors
 
     /// The kind of supply the readings describe. Fixed at manufacture, and
-    /// checked against the feature map by [`Self::validate`].
+    /// checked against the feature map during Startup lifecycle validation.
     fn power_mode(&self, _ctx: impl ReadContext) -> Result<PowerModeEnum, Error> {
         Ok(H::POWER_MODE)
     }
@@ -513,9 +512,8 @@ impl<H: ElecPwrMeasHooks> ClusterHandler for ElecPwrMeasHandler<H> {
 /// Every reading is optional: a device that cannot currently measure a
 /// quantity answers `None` rather than a stale or invented number.
 pub trait ElecPwrMeasHooks {
-    /// The features and attributes this instance serves. See
-    /// [`ElecPwrMeasHandler::validate`] for what a serveable configuration
-    /// is.
+    /// The features and attributes this instance serves. Startup lifecycle
+    /// validation checks that the configuration is serveable.
     const CLUSTER: Cluster<'static>;
 
     /// `PowerMode`. A const because the supply a device is

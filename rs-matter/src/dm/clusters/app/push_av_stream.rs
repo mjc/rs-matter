@@ -61,7 +61,7 @@
 //! * NOT in scope (left to the application via hooks):
 //!   `PerZoneSensitivity` / `Metadata` features beyond echoing the
 //!   client-supplied bits in stored options. The cluster declares
-//!   neither feature in [`Self::CLUSTER`]; build a custom `Cluster`
+//!   neither feature in [`PushAvStreamHandler::CLUSTER`]; build a custom `Cluster`
 //!   value if you need them.
 
 use core::cell::{Cell, RefCell};
@@ -93,7 +93,7 @@ pub const MAX_TRANSPORT_OPTIONS_BYTES: usize = 768;
 /// Errors a [`PushAvStreamHooks`] implementation can surface back to
 /// the cluster. Each maps to a Matter cluster-status code (most via
 /// the generic `ErrorCode` set; cluster-specific codes are emitted
-/// directly by the handler from [`Self::CLUSTER`]).
+/// directly by the handler from [`PushAvStreamHandler::CLUSTER`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PushAvError {

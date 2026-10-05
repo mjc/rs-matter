@@ -37,19 +37,16 @@
 //! harness's `has_attribute(TimeSource)` gate on `TC_TIMESYNC_2_1`
 //! matches and the test runs rather than skipping.
 //!
-//! # Pluggable data source — [`TimeSync`]
+//! # Pluggable data sources
 //!
 //! The cluster's mandatory members (`UTCTime`, `Granularity`,
 //! `TimeSource`, and the `SetUTCTime` command) are handled by
-//! [`TimeSyncHandler`] directly against the Matter-wide
-//! [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time)
-//! state — they require no implementor input.
+//! [`TimeSyncHandler`] directly against the Matter-wide Last-Known-Good UTC
+//! Time state — they require no implementor input.
 //!
-//! [`TimeSync`] only carries the feature-gated members
-//! (`TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER` / `TIME_SYNC_CLIENT`).
-//! Every method has a "no value" default so `impl TimeSync for ()`
-//! is a fully usable no-op provider; implementors only override the
-//! methods matching the options they advertised.
+//! Feature-gated members are supplied by provider traits, including
+//! [`TimeZones`], [`NtpClient`], and [`NtpServer`]. The built-in
+//! `TIME_SYNC_CLIENT` feature uses the trusted time source in the Matter RTC.
 
 use core::num::NonZeroU8;
 
@@ -141,7 +138,7 @@ impl UtcTime {
 ///
 /// `anchor`, `granularity`, and `source` are **volatile** — they
 /// describe the current monotonic-clock anchoring around the most
-/// recent [`Matter::set_utc_time`] call. After reboot, `anchor` is
+/// recent [`Rtc::set_utc_time`] call. After reboot, `anchor` is
 /// `None` (no live current-time tracking is active), so the TimeSync
 /// cluster reports `UTCTime = Null`, `Granularity = NoTimeGranularity`
 /// and `TimeSource = None` (per spec) — while
@@ -362,11 +359,10 @@ impl Rtc {
     /// is recorded verbatim.
     ///
     /// The new value is written to the in-memory state immediately.
-    /// Persistence to `LKG_UTC_KEY` happens separately — the
-    /// TimeSync cluster handler invokes this from inside a
-    /// `kv.access(...)` closure and writes through the same handle.
-    /// Direct callers that need on-disk durability should call
-    /// [`Self::persist_lkg_utc`] explicitly.
+    /// This method does not persist it. The trusted-time-source client
+    /// separately calls the persistence-aware update, which writes to
+    /// `LKG_UTC_KEY` when the new value differs from the persisted value by
+    /// at least one day.
     pub fn set_utc_time(
         &mut self,
         utc_us: u64,
@@ -489,7 +485,7 @@ bitflags! {
     }
 }
 
-/// One time-zone entry yielded by [`TimeSync::time_zone`] via the
+/// One time-zone entry yielded by [`TimeZones::time_zone`] via the
 /// visitor callback. The lifetime `'a` is the borrow of the
 /// implementor's internal storage for the duration of the visit, so
 /// `name` can point straight into the implementor's table without
@@ -505,7 +501,7 @@ pub struct TimeZoneEntry<'a> {
     pub name: Option<&'a str>,
 }
 
-/// One DST-offset entry yielded by [`TimeSync::dst_offset`] via the
+/// One DST-offset entry yielded by [`TimeZones::dst_offset`] via the
 /// visitor callback.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV)]
 pub struct DSTOffsetEntry {
@@ -520,7 +516,7 @@ pub struct DSTOffsetEntry {
 }
 
 /// Snapshot of the device's currently-configured trusted time source.
-/// Returned by [`TimeSync::trusted_time_source`] wrapped in a
+/// Returned by [`Rtc::trusted_time_source`] wrapped in a
 /// [`Nullable`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct TrustedTimeSourceData {
@@ -804,7 +800,7 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
     }
 }
 
-/// A concrete [`TimeSync`] provider implementing the `TIME_ZONE` feature's
+/// A concrete [`TimeZones`] provider implementing the `TIME_ZONE` feature's
 /// storage and validation: the `TimeZone` / `DSTOffset` lists with all the
 /// Matter Core spec constraint checks on `SetTimeZone` / `SetDSTOffset`.
 ///
@@ -1387,7 +1383,7 @@ const fn time_sync_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
 /// advertising the features encoded in `OPTS` (the [`Options::bits`]
 /// value). See the [`Options`] flags for the per-bit detail.
 ///
-/// Pair the returned shape with a [`TimeSync`] implementation whose
+/// Pair the returned shape with providers whose
 /// methods supply real values for the corresponding option bits.
 pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
     let opts = Options::from_bits_truncate(OPTS);
@@ -1422,7 +1418,7 @@ pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
 
 /// Handler for the Time Synchronization Matter cluster.
 ///
-/// Borrows a `&dyn TimeSync` data provider for the lifetime `'a` and
+/// Borrows data providers for the lifetime `'a` and
 /// forwards every non-builtin attribute read / command invoke to it.
 ///
 /// The handler is **not** parameterized by cluster shape:

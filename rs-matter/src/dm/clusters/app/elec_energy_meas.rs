@@ -38,7 +38,7 @@
 //! A *cumulative* reading has no beginning - it runs from the device's
 //! lifetime origin - so its start fields are omitted. The handler enforces
 //! that itself rather than trusting the hooks; see
-//! [`EnergyMeasurement::as_cumulative`].
+//! its cumulative-reading conversion logic.
 
 use core::pin::pin;
 
@@ -60,9 +60,8 @@ pub use crate::dm::clusters::decl::electrical_energy_measurement::*;
 
 const CLUSTER_REVISION: u16 = 2;
 
-/// Features this handler serves; anything else in an
-/// [`ElecEnergyMeasHooks::CLUSTER`] FeatureMap is rejected by
-/// [`ElecEnergyMeasHandler::validate`].
+/// Features this handler serves; Startup lifecycle validation rejects any
+/// other bits in [`ElecEnergyMeasHooks::CLUSTER`]'s FeatureMap.
 const SUPPORTED_FEATURES: u32 = Feature::IMPORTED_ENERGY.bits()
     | Feature::CUMULATIVE_ENERGY.bits()
     | Feature::PERIODIC_ENERGY.bits();
@@ -518,7 +517,7 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
     /// When the lifetime counters were last reset, or null if never.
     ///
     /// The exported half is always omitted - each field is conditional on its
-    /// direction's feature, and `EXPE` is rejected by [`Self::validate`].
+    /// direction's feature, and `EXPE` is rejected by Startup lifecycle validation.
     fn cumulative_energy_reset<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -541,7 +540,7 @@ impl<H: ElecEnergyMeasHooks> ClusterHandler for ElecEnergyMeasHandler<H> {
 /// Encode one `EnergyMeasurementStruct`.
 ///
 /// `ApparentEnergy` and `ReactiveEnergy` are provisional and their features
-/// rejected by [`ElecEnergyMeasHandler::validate`], so both are omitted.
+/// rejected during Startup lifecycle validation, so both are omitted.
 fn write_energy<P>(
     builder: EnergyMeasurementStructBuilder<P>,
     reading: &EnergyMeasurement,
@@ -562,9 +561,8 @@ where
 
 /// Device-specific hooks for the Electrical Energy Measurement cluster.
 pub trait ElecEnergyMeasHooks {
-    /// The features, attributes and events this instance serves. See
-    /// [`ElecEnergyMeasHandler::validate`] for what a serveable configuration
-    /// is.
+    /// The features, attributes and events this instance serves. Startup
+    /// lifecycle validation checks that the configuration is serveable.
     const CLUSTER: Cluster<'static>;
 
     /// The `Accuracy` attribute; its `measurement_type` must be

@@ -72,6 +72,12 @@ jobs:
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo clippy --no-deps --all-targets -- -Dwarnings
 
+      - name: Public API documentation
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
       - name: Clippy - baremetal
         if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
         run: cd rs-matter; cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},defmt --target riscv32imac-unknown-none-elf -- -Dwarnings

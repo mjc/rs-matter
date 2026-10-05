@@ -24,7 +24,7 @@
 //! Reference: connectedhomeip `src/credentials/attestation_verifier/DefaultDeviceAttestationVerifier.cpp`
 
 /// Length of a Subject Key Identifier (SHA-1 hash), in bytes.
-/// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.2
+/// <https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.2>
 pub const KEY_IDENTIFIER_LEN: usize = 20;
 
 /// Length of an uncompressed P-256 public key (0x04 || X || Y), in bytes.

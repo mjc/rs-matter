@@ -29,7 +29,7 @@
 //! commissioner_tests [PASSCODE] [PEER_ADDR]
 //! ```
 //! Defaults match the rs-matter test fixture
-//! ([`TEST_DEV_COMM`](rs_matter::dm::devices::test::TEST_DEV_COMM)):
+//! ([`TEST_DEV_COMM`]):
 //! passcode `20202021`, peer `[::1]:5540`.
 //!
 //! Exits `0` on a successful commissioning, non-zero (with a

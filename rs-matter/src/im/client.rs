@@ -315,7 +315,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// and completes as soon as the message is out: groupcast invokes elicit
     /// no responses and group messages carry no MRP, so there is nothing to
     /// wait for. Push the command entries with endpoint-less paths
-    /// ([`CmdDataBuilder::path_from`] with an endpoint-less
+    /// ([`crate::im::CmdDataBuilder::path_from`] with an endpoint-less
     /// [`crate::im::CmdPath`]) — receivers apply them to their group-member
     /// endpoints.
     #[cfg(feature = "groups")]
@@ -892,7 +892,7 @@ impl<'a> TLVWrite for InvokeSenderSlot<'a> {
     }
 
     /// Roll the cursor back to a position previously returned by
-    /// [`get_tail`]. Used by derived `ToTLV` impls to unwind a
+    /// `get_tail`. Used by derived `ToTLV` impls to unwind a
     /// partially-written TLV structure on error.
     fn rewind_to(&mut self, pos: Self::Position) {
         self.cursor = pos;
@@ -980,7 +980,7 @@ impl<'a> InvokeRespChunk<'a> {
     }
 
     /// Borrowed access to the parsed `InvokeResp` for this chunk —
-    /// `None` if the chunk is status-only (see [`is_status_only`]).
+    /// `None` if the chunk is status-only (see [`Self::is_status_only`]).
     /// The returned value points into the exchange's RX buffer, so
     /// its lifetime is the borrow of this `InvokeRespChunk`.
     pub fn response(&self) -> Result<Option<InvokeResp<'_>>, Error> {

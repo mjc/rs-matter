@@ -608,7 +608,7 @@ where
 
     /// Open the `Data` slot as a typed sub-builder.
     ///
-    /// Closure-free counterpart to [`data`](Self::data) — hand back
+    /// Closure-free counterpart to [`Self::data`] — hand back
     /// the codegen-emitted typed value builder for the attribute,
     /// already opened at `AttrDataTag::Data`. The caller fills the
     /// value, then calls `.end()` on the sub-builder; that close
@@ -618,10 +618,10 @@ where
     /// (the "double-end" pattern of the IM-client glue).
     ///
     /// Useful for struct- or array-valued attributes (e.g. ACL
-    /// entries). For scalars prefer the closure-based [`data`].
+    /// entries). For scalars prefer the closure-based `Self::data`.
     ///
     /// Soundness of the phantom typestate advance: see
-    /// [`CmdDataBuilder::data_builder`].
+    /// `CmdDataBuilder::data_builder`.
     pub fn data_builder<B>(self) -> Result<B, Error>
     where
         B: TLVBuilder<AttrDataBuilder<P, 3>>,

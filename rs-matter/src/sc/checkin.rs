@@ -104,7 +104,7 @@ impl<'k> CheckIn<'k> {
     ///
     /// `counter` is the current Check-In Counter value; the caller owns its
     /// monotonicity and persistence. `app_data` is the use-case payload (empty
-    /// if unused). `payload` is the output buffer, at least [`payload_len`]
+    /// if unused). `payload` is the output buffer, at least `Self::payload_len`
     /// (`app_data.len()`) bytes long.
     ///
     /// On success returns the sub-slice of `payload` holding the complete

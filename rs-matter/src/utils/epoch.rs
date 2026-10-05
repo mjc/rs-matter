@@ -20,16 +20,18 @@
 //! seed emitted by `build.rs`.
 //!
 //! Every rs-matter consumer that needs calendar time (cert path
-//! validation, the TimeSync cluster's mandatory `UTCTime` /
+//! validation, the TimeSync cluster’s mandatory `UTCTime` /
 //! `Granularity` / `TimeSource` / `SetUTCTime`, the NOC attestation
-//! timestamp, …) reads / writes the Last-Known-Good UTC Time on the
-//! [`crate::Matter`] object via [`crate::Matter::last_known_utc_time`]
-//! / [`crate::Matter::utc_time`] / [`crate::Matter::set_utc_time`].
-//! That value is persisted (per Matter Core spec), seeded
-//! from [`FIRMWARE_BUILD_MATTER_US`] on a freshly-flashed device, and
-//! is the single source of truth — application code that has access
-//! to a real-time clock or NTP samples should feed those into
-//! [`crate::Matter::set_utc_time`] directly.
+//! timestamp, …) reads the Last-Known-Good UTC Time through
+//! [`Rtc::utc_time`](crate::dm::clusters::time_sync::Rtc::utc_time), usually
+//! inside [`Matter::with_state`](crate::Matter::with_state). The RTC is seeded
+//! from [`FIRMWARE_BUILD_MATTER_US`] on a freshly flashed device.
+//!
+//! [`Rtc::set_utc_time`](crate::dm::clusters::time_sync::Rtc::set_utc_time)
+//! updates the in-memory clock and monotonic anchor; it does not persist the
+//! value. The trusted-time-source client uses an internal persistence-aware
+//! update and writes the Last-Known-Good value only when it differs from the
+//! last persisted value by at least one day.
 
 /// Seconds between the UNIX epoch (1970-01-01T00:00:00Z UTC) and the
 /// Matter epoch (2000-01-01T00:00:00Z UTC). Add this constant to a

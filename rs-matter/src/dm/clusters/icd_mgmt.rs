@@ -120,7 +120,7 @@ pub struct IcdNetParams {
 
 /// What a Long-Idle-Time-capable ICD advertises about itself over DNS-SD.
 ///
-/// The [`LitIcdMgmtHandler`] keeps [`Matter`](crate::Matter) supplied with it
+/// The [`LitIcdMgmtHandler`] keeps [`Matter`] supplied with it
 /// (see [`Matter::icd_advertisement`](crate::Matter::icd_advertisement)); the
 /// mDNS layer derives the `ICD` and `SII` TXT keys from it. A SIT-only device
 /// advertises none: it has no `ICD` key, and its `SII` is the configured one.

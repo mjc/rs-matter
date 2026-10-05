@@ -25,7 +25,7 @@
 //! its client list, for instance, reads its Binding list to find the
 //! bulb(s) it's been paired with.
 //!
-//! See the spec's [`9.6` summary][spec], or the in-tree write-up in
+//! See the spec's `9.6` summary, or the in-tree write-up in
 //! `super::user_label` for the analogous (per-endpoint, persistent,
 //! shared-registry) shape.
 //!
@@ -35,7 +35,7 @@
 //! bit (Non-Volatile, Matter Core) — values **SHALL** survive
 //! reboots. We re-serialise the whole registry under [`BINDINGS_KEY`]
 //! after every successful write, and re-hydrate on startup via
-//! [`Bindings::load_persist`], driven by the [`LifecycleOp::Startup`]
+//! `Bindings::load_persist`, driven by the [`LifecycleOp::Startup`]
 //! lifecycle operation the handler receives (deliver it by calling
 //! `InteractionModel::startup` once at startup).
 //!

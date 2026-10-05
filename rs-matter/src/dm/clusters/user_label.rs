@@ -159,7 +159,7 @@ pub struct UserLabels<const E: usize, const N: usize = 4> {
 
 impl<const E: usize, const N: usize> UserLabels<E, N> {
     /// Create an empty registry. It is populated from KV at startup
-    /// via [`Self::load_persist`], driven by the [`LifecycleOp::Startup`]
+    /// via `load_persist`, driven by the [`LifecycleOp::Startup`]
     /// lifecycle operation delivered to the data model.
     ///
     /// Prefer [`Self::init`] for non-trivial `E` * `N` so the

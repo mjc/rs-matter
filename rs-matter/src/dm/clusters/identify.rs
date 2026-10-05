@@ -183,7 +183,7 @@ struct Session {
 /// observably equivalent to a physical countdown per Matter App Cluster
 /// spec (which constrains the attribute's observable value, not
 /// the implementation's internal storage), but it avoids 60 wakeups for
-/// a 60-second identify — the [run task](Handler::run) only schedules a
+/// a 60-second identify — the run task only schedules a
 /// single `Timer::at(deadline)` per identify cycle, fires the final-zero
 /// `notify_attr_changed`, and parks. On battery-powered targets that's the
 /// difference between a measurable wake-and-radio-on hit per second and a

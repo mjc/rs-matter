@@ -369,7 +369,7 @@ macro_rules! meter_accuracy {
     };
 }
 
-/// What a measurement tick moved, as [`HeatingElement::accumulate`] reports it.
+/// Which readings changed when the heating element closes a measurement period.
 ///
 /// The two readings do not move together: the lifetime counter only changes
 /// when the running total crosses a whole milliwatt-hour, while a measurement

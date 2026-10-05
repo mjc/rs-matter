@@ -24,7 +24,7 @@
 //!   legacy Groups cluster, so legacy- and Groupcast-managed groups coexist
 //!   and group-addressed RX processing needs no changes);
 //! - group keys are ordinary Group Key Management key sets (`KeySetID` ==
-//!   `GroupKeySetID`), so key sets created via [`JoinGroup`] are visible to -
+//!   `GroupKeySetID`), so key sets created via the `JoinGroup` command are visible to -
 //!   and manageable by - the Group Key Management cluster, and vice versa;
 //! - the `Membership` attribute is a live join of the group table and the
 //!   group-key map: a membership whose group has no key-set mapping reports

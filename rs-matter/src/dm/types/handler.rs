@@ -1856,7 +1856,7 @@ mod asynch {
     /// [`handle_report`](Self::handle_report).
     ///
     /// The report handler is a **separate, peer capability** of the
-    /// [`InteractionModel`], alongside the [`DataModel`] cluster handler — not a
+    /// [`crate::im::InteractionModel`], alongside the [`crate::dm::DataModel`] cluster handler — not a
     /// supertrait of `DataModel`. A pure accessory does not supply one: the
     /// `InteractionModel`'s report handler defaults to `()`, whose
     /// implementation disowns every inbound report with

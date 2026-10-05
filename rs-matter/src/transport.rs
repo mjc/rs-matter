@@ -144,7 +144,7 @@ pub struct Transport {
     icd_check_in_received: Notification,
     /// A notification that the Matter mDNS services might have changed
     mdns_changed: Notification,
-    /// The single in-flight mDNS resolve rendezvous, shared between [`Transport::resolve`]
+    /// The single in-flight mDNS resolve rendezvous, shared between `Transport::resolve`
     /// callers and the running mDNS responder.
     mdns_resolve: Signal<MdnsResolveState>,
     /// The single in-flight mDNS commissionable-browse rendezvous, shared between
@@ -653,7 +653,7 @@ impl Transport {
     /// returns [`ErrorCode::ResourceExhausted`].
     ///
     /// Returns `(address, commissionable_instance_id)` - the address can be fed
-    /// straight into [`Transport::initiate_pase`] to start PASE. Returns
+    /// straight into `Transport::initiate_pase` to start PASE. Returns
     /// [`ErrorCode::NotFound`] on timeout; the rendezvous is reset if this future
     /// is dropped.
     ///
@@ -1291,7 +1291,7 @@ pub enum TransportPreference {
 
 /// Resets the mDNS resolve rendezvous to `Idle` on drop, unless disarmed.
 ///
-/// This guarantees that a dropped (cancelled or timed-out) [`Transport::resolve`]
+/// This guarantees that a dropped (cancelled or timed-out) `Transport::resolve`
 /// future does not leave the single-slot rendezvous occupied for other callers.
 struct MdnsResolveGuard<'a> {
     signal: &'a Signal<MdnsResolveState>,

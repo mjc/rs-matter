@@ -18,7 +18,7 @@
 //! Bulk Data Exchange (BDX) protocol.
 //!
 //! BDX transfers an opaque "file" (a sequence of bytes plus optional metadata)
-//! between two nodes over a single [`Exchange`](crate::transport::exchange::Exchange),
+//! between two nodes over a single [`Exchange`],
 //! inside a PASE or CASE session. It is used, among other things, to download
 //! Over-the-Air (OTA) software-update images.
 //!

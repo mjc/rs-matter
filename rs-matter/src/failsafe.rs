@@ -122,7 +122,7 @@ impl FailSafe {
     /// Ideally, it should also be called at the beginning of any API that requires the fail-safe to be armed to ensure that the state is up to date.
     ///
     /// Returns the local index of the fabric that ended up removed by the
-    /// rollback (see [`Failsafe::expire`]), if any - the caller must follow
+    /// rollback (see `Failsafe::expire`), if any - the caller must follow
     /// up with a `HandlerContext::notify_fabric_removed` broadcast once the
     /// Matter state lock is released.
     #[allow(clippy::too_many_arguments)]

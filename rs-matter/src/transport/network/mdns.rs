@@ -731,7 +731,7 @@ impl ToLabelIter for DottedName<'_> {
     }
 }
 
-/// The result of a successful [`Matter::resolve`](crate::Matter::resolve): the
+/// The result of a successful operational mDNS resolve: the
 /// peer's address plus its advertised MRP/session parameters (`SII`/`SAI`/`SAT`
 /// = session idle interval / active interval / active threshold, milliseconds).
 ///
@@ -863,11 +863,11 @@ pub(crate) fn merge_resolve_candidate(
 }
 
 /// The state of the single in-flight mDNS resolve "rendezvous" shared between
-/// [`Matter::resolve`](crate::Matter::resolve) callers and the running mDNS
+/// operational mDNS resolve callers and the running mDNS
 /// responder.
 ///
 /// At most one resolve is in flight at a time; callers serialize on the `Idle`
-/// state. See `Matter::resolve` for the protocol.
+/// state. See `Transport::resolve` for the protocol.
 #[derive(Debug, Clone)]
 pub(crate) enum MdnsResolveState {
     /// No resolve in progress; a caller may place a request.
