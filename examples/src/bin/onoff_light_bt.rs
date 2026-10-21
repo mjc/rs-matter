@@ -216,11 +216,6 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
             let mut bluetooth = pin!(bluez::run_peripheral(
                 connection, None, "MT", &adv_data, &btp
             ));
-            // Here's how to run with the BlueR peripheral instead:
-            // let mut bluetooth = pin!(async_compat::Compat::new(rs_matter::transport::network::btp::bluer::run_peripheral(
-            //     None, "MT", &adv_data, &btp
-            // )));
-
             let mut transport = pin!(matter.run(&crypto, &btp, &btp, NoNetwork));
             let mut wifi_prov_task = pin!(async {
                 NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
