@@ -2793,7 +2793,7 @@ impl<const N: usize> PacketBuffer<N> {
     pub fn init() -> impl Init<Self> {
         #[cfg(all(feature = "large-buffers", feature = "alloc"))]
         {
-            return init!(Self { buffer: None });
+            init!(Self { buffer: None })
         }
 
         #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
@@ -2805,7 +2805,7 @@ impl<const N: usize> PacketBuffer<N> {
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn buf_mut(&mut self) -> &mut crate::utils::storage::Vec<u8, N> {
         unwrap!(
-            self.buffer.as_mut().map(|buffer| &mut **buffer),
+            self.buffer.as_deref_mut(),
             "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
         )
     }
@@ -2818,7 +2818,7 @@ impl<const N: usize> PacketBuffer<N> {
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn buf_ref(&self) -> &crate::utils::storage::Vec<u8, N> {
         unwrap!(
-            self.buffer.as_ref().map(|buffer| &**buffer),
+            self.buffer.as_deref(),
             "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
         )
     }
