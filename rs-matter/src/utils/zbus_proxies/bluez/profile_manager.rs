@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use zbus::{
     proxy,
-    zvariant::{ObjectPath, Value},
+    wire::{ObjectPath, Variant},
 };
 
 #[proxy(
@@ -35,7 +35,7 @@ pub trait ProfileManager {
         &self,
         profile: &ObjectPath<'_>,
         uuid: &str,
-        options: HashMap<&str, &Value<'_>>,
+        options: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// UnregisterProfile method

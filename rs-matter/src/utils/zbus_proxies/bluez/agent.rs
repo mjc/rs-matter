@@ -17,7 +17,7 @@
 
 //! # D-Bus interface proxy for: `org.bluez.Agent1`
 
-use zbus::{proxy, zvariant::ObjectPath};
+use zbus::{proxy, wire::ObjectPath};
 
 #[proxy(interface = "org.bluez.Agent1", assume_defaults = true)]
 pub trait Agent {

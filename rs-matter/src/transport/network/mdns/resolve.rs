@@ -27,7 +27,7 @@ use std::net::IpAddr;
 use domain::base::Name;
 use embassy_futures::select::select3;
 use embassy_time::{Duration, Timer};
-use zbus::zvariant::{ObjectPath, OwnedObjectPath};
+use zbus::wire::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;

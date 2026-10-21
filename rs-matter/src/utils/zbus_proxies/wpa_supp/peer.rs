@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{OwnedObjectPath, Value};
+use zbus::wire::{OwnedObjectPath, Variant};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1.Peer",
@@ -29,7 +29,7 @@ use zbus::zvariant::{OwnedObjectPath, Value};
 pub trait Peer {
     /// PropertiesChanged signal
     #[zbus(signal)]
-    fn properties_changed(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn properties_changed(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// DeviceName property
     #[zbus(property)]

@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::wire::{OwnedVariant, Variant};
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.Settings.Connection",
@@ -37,29 +37,29 @@ pub trait Connection {
     fn get_secrets(
         &self,
         setting_name: &str,
-    ) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
+    ) -> zbus::Result<HashMap<String, HashMap<String, OwnedVariant>>>;
 
     /// GetSettings method
-    fn get_settings(&self) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
+    fn get_settings(&self) -> zbus::Result<HashMap<String, HashMap<String, OwnedVariant>>>;
 
     /// Save method
     fn save(&self) -> zbus::Result<()>;
 
     /// Update method
-    fn update(&self, properties: HashMap<&str, HashMap<&str, &Value<'_>>>) -> zbus::Result<()>;
+    fn update(&self, properties: HashMap<&str, HashMap<&str, &Variant<'_>>>) -> zbus::Result<()>;
 
     /// Update2 method
     fn update2(
         &self,
-        settings: HashMap<&str, HashMap<&str, &Value<'_>>>,
+        settings: HashMap<&str, HashMap<&str, &Variant<'_>>>,
         flags: u32,
-        args: HashMap<&str, &Value<'_>>,
-    ) -> zbus::Result<HashMap<String, OwnedValue>>;
+        args: HashMap<&str, &Variant<'_>>,
+    ) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     /// UpdateUnsaved method
     fn update_unsaved(
         &self,
-        properties: HashMap<&str, HashMap<&str, &Value<'_>>>,
+        properties: HashMap<&str, HashMap<&str, &Variant<'_>>>,
     ) -> zbus::Result<()>;
 
     /// Removed signal

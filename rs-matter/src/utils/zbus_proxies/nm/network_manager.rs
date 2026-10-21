@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager",
@@ -39,7 +39,7 @@ pub trait NetworkManager {
     /// AddAndActivateConnection method
     fn add_and_activate_connection(
         &self,
-        connection: HashMap<&str, HashMap<&str, &Value<'_>>>,
+        connection: HashMap<&str, HashMap<&str, &Variant<'_>>>,
         device: &ObjectPath<'_>,
         specific_object: &ObjectPath<'_>,
     ) -> zbus::Result<(OwnedObjectPath, OwnedObjectPath)>;
@@ -48,14 +48,14 @@ pub trait NetworkManager {
     #[allow(clippy::too_many_arguments)]
     fn add_and_activate_connection2(
         &self,
-        connection: HashMap<&str, HashMap<&str, &Value<'_>>>,
+        connection: HashMap<&str, HashMap<&str, &Variant<'_>>>,
         device: &ObjectPath<'_>,
         specific_object: &ObjectPath<'_>,
-        options: HashMap<&str, &Value<'_>>,
+        options: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<(
         OwnedObjectPath,
         OwnedObjectPath,
-        HashMap<String, OwnedValue>,
+        HashMap<String, OwnedVariant>,
     )>;
 
     /// CheckConnectivity method
@@ -179,12 +179,12 @@ pub trait NetworkManager {
 
     /// GlobalDnsConfiguration property
     #[zbus(property)]
-    fn global_dns_configuration(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn global_dns_configuration(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
     #[zbus(property)]
     fn set_global_dns_configuration(
         &self,
-        // TODO value: HashMap<&str, &Value<'_>>,
-        value: Value<'_>,
+        // TODO value: HashMap<&str, &Variant<'_>>,
+        value: Variant<'_>,
     ) -> zbus::Result<()>;
 
     /// Metered property

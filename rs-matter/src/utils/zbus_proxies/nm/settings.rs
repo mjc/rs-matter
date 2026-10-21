@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.Settings",
@@ -31,21 +31,21 @@ pub trait Settings {
     /// AddConnection method
     fn add_connection(
         &self,
-        connection: HashMap<&str, HashMap<&str, &Value<'_>>>,
+        connection: HashMap<&str, HashMap<&str, &Variant<'_>>>,
     ) -> zbus::Result<OwnedObjectPath>;
 
     /// AddConnection2 method
     fn add_connection2(
         &self,
-        settings: HashMap<&str, HashMap<&str, &Value<'_>>>,
+        settings: HashMap<&str, HashMap<&str, &Variant<'_>>>,
         flags: u32,
-        args: HashMap<&str, &Value<'_>>,
-    ) -> zbus::Result<(OwnedObjectPath, HashMap<String, OwnedValue>)>;
+        args: HashMap<&str, &Variant<'_>>,
+    ) -> zbus::Result<(OwnedObjectPath, HashMap<String, OwnedVariant>)>;
 
     /// AddConnectionUnsaved method
     fn add_connection_unsaved(
         &self,
-        connection: HashMap<&str, HashMap<&str, &Value<'_>>>,
+        connection: HashMap<&str, HashMap<&str, &Variant<'_>>>,
     ) -> zbus::Result<OwnedObjectPath>;
 
     /// GetConnectionByUuid method

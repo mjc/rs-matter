@@ -17,7 +17,7 @@
 
 //! # D-Bus interface proxy for: `org.bluez.ThermometerManager1`
 
-use zbus::{proxy, zvariant::ObjectPath};
+use zbus::{proxy, wire::ObjectPath};
 
 #[proxy(interface = "org.bluez.ThermometerManager1", assume_defaults = true)]
 pub trait ThermometerManager {

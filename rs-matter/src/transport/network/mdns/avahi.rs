@@ -29,7 +29,7 @@ use embassy_futures::select::{select, select3, Either};
 use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
 
-use zbus::zvariant::{ObjectPath, OwnedObjectPath};
+use zbus::wire::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
@@ -189,7 +189,7 @@ impl AvahiMdns {
                 .service_browser_prepare(AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC, service_type, "", 0)
                 .await?;
             let browser = ServiceBrowserProxy::builder(connection)
-                .path(browser_path)?
+                .path(browser_path)
                 .build()
                 .await?;
             let mut item_new_stream = browser.receive_item_new().await?;
@@ -269,7 +269,7 @@ impl AvahiMdns {
                 .service_browser_prepare(AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC, &service_type, "", 0)
                 .await?;
             let browser = ServiceBrowserProxy::builder(connection)
-                .path(browser_path)?
+                .path(browser_path)
                 .build()
                 .await?;
             let mut item_new_stream = browser.receive_item_new().await?;
@@ -367,7 +367,7 @@ impl AvahiMdns {
         let path = avahi.entry_group_new().await?;
 
         let group = EntryGroupProxy::builder(&self.connection)
-            .path(path.clone())?
+            .path(path.clone())
             .build()
             .await?;
 
@@ -439,7 +439,7 @@ impl AvahiMdns {
 
     async fn deregister(&self, path: ObjectPath<'_>) -> Result<(), Error> {
         let group = EntryGroupProxy::builder(&self.connection)
-            .path(path)?
+            .path(path)
             .build()
             .await?;
 

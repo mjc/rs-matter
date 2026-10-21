@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::OwnedValue;
+use zbus::wire::OwnedVariant;
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.IP4Config",
@@ -29,7 +29,7 @@ use zbus::zvariant::OwnedValue;
 pub trait IP4Config {
     /// AddressData property
     #[zbus(property)]
-    fn address_data(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
+    fn address_data(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
 
     /// Addresses property
     #[zbus(property)]
@@ -53,7 +53,7 @@ pub trait IP4Config {
 
     /// NameserverData property
     #[zbus(property)]
-    fn nameserver_data(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
+    fn nameserver_data(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
 
     /// Nameservers property
     #[zbus(property)]
@@ -61,7 +61,7 @@ pub trait IP4Config {
 
     /// RouteData property
     #[zbus(property)]
-    fn route_data(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
+    fn route_data(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
 
     /// Routes property
     #[zbus(property)]

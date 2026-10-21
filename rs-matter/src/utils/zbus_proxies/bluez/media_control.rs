@@ -17,7 +17,7 @@
 
 //! # D-Bus interface proxy for: `org.bluez.MediaControl1`
 
-use zbus::{proxy, zvariant::OwnedObjectPath};
+use zbus::{proxy, wire::OwnedObjectPath};
 
 #[proxy(interface = "org.bluez.MediaControl1", assume_defaults = true)]
 pub trait MediaControl {

@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, Variant};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1",
@@ -29,7 +29,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
 )]
 pub trait WPASupplicant {
     /// CreateInterface method
-    fn create_interface(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<OwnedObjectPath>;
+    fn create_interface(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<OwnedObjectPath>;
 
     /// ExpectDisconnect method
     fn expect_disconnect(&self) -> zbus::Result<()>;
@@ -45,7 +45,7 @@ pub trait WPASupplicant {
     fn interface_added(
         &self,
         path: ObjectPath<'_>,
-        properties: HashMap<&str, Value<'_>>,
+        properties: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// InterfaceRemoved signal
@@ -54,7 +54,7 @@ pub trait WPASupplicant {
 
     /// PropertiesChanged signal
     #[zbus(signal)]
-    fn properties_changed(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn properties_changed(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// Capabilities property
     #[zbus(property)]

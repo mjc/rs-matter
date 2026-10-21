@@ -19,7 +19,7 @@
 
 use zbus::{
     proxy,
-    zvariant::{ObjectPath, OwnedObjectPath},
+    wire::{ObjectPath, OwnedObjectPath},
 };
 
 #[proxy(interface = "org.bluez.HealthDevice1", assume_defaults = true)]

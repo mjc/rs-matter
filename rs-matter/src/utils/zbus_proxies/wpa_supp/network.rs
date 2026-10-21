@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::wire::{OwnedVariant, Variant};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1.Network",
@@ -29,7 +29,7 @@ use zbus::zvariant::{OwnedValue, Value};
 pub trait Network {
     /// PropertiesChanged signal
     #[zbus(signal)]
-    fn properties_changed(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn properties_changed(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// Enabled property
     #[zbus(property)]
@@ -39,7 +39,7 @@ pub trait Network {
 
     /// Properties property
     #[zbus(property, name = "Properties")]
-    fn props(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn props(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
     #[zbus(property, name = "Properties")]
-    fn set_props(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn set_props(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 }

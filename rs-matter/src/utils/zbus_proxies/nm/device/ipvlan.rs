@@ -18,7 +18,7 @@
 //! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Ipvlan`
 
 use zbus::proxy;
-use zbus::zvariant::OwnedObjectPath;
+use zbus::wire::OwnedObjectPath;
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.Device.Ipvlan",

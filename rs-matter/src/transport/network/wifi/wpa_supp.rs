@@ -26,7 +26,7 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
 
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 use zbus::Connection;
 
 use crate::dm::clusters::net_comm::{
@@ -95,7 +95,7 @@ where
         let interface_path = wpas.get_interface(self.ifname).await?;
 
         InterfaceProxy::builder(self.connection)
-            .path(interface_path.clone())?
+            .path(interface_path.clone())
             .build()
             .await
     }
@@ -173,10 +173,7 @@ where
     where
         F: FnOnce(Option<&NetworkScanInfo>) -> Result<R, Error>,
     {
-        let bss_info = BSSProxy::builder(self.connection)
-            .path(bss)?
-            .build()
-            .await?;
+        let bss_info = BSSProxy::builder(self.connection).path(bss).build().await?;
 
         if bss_info.mode().await? == "infrastructure" {
             let wpa = bss_info.wpa().await?;
@@ -185,7 +182,7 @@ where
             let security = if wpa.is_empty() && rsn.is_empty() {
                 WiFiSecurityBitmap::UNENCRYPTED
             } else {
-                let str_list_val = |key, map: &HashMap<String, OwnedValue>| {
+                let str_list_val = |key, map: &HashMap<String, OwnedVariant>| {
                     let str_list: Vec<String> = map
                         .get(key)
                         .cloned()
@@ -279,7 +276,7 @@ where
 
         let mut args = HashMap::new();
 
-        let active = Value::from("active");
+        let active = Variant::from("active");
         args.insert("Type", &active);
 
         let ssids = network.map(|network| vec![network.to_vec()].into());

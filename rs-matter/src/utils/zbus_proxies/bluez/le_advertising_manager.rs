@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use zbus::{
     proxy,
-    zvariant::{ObjectPath, Value},
+    wire::{ObjectPath, Variant},
 };
 
 #[proxy(
@@ -33,7 +33,7 @@ pub trait LEAdvertisingManager {
     fn register_advertisement(
         &self,
         advertisement: &ObjectPath<'_>,
-        options: HashMap<&str, &Value<'_>>,
+        options: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// UnregisterAdvertisement method

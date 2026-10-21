@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::OwnedValue;
+use zbus::wire::OwnedVariant;
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.DnsManager",
@@ -30,7 +30,7 @@ use zbus::zvariant::OwnedValue;
 pub trait DnsManager {
     /// Configuration property
     #[zbus(property)]
-    fn configuration(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
+    fn configuration(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
 
     /// Mode property
     #[zbus(property)]

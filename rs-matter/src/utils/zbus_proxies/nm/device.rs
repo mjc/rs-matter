@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zbus::wire::{OwnedObjectPath, OwnedVariant, Variant};
 
 pub mod adsl;
 pub mod bluetooth;
@@ -72,12 +72,12 @@ pub trait Device {
     fn get_applied_connection(
         &self,
         flags: u32,
-    ) -> zbus::Result<(HashMap<String, HashMap<String, OwnedValue>>, u64)>;
+    ) -> zbus::Result<(HashMap<String, HashMap<String, OwnedVariant>>, u64)>;
 
     /// Reapply method
     fn reapply(
         &self,
-        connection: HashMap<&str, HashMap<&str, &Value<'_>>>,
+        connection: HashMap<&str, HashMap<&str, &Variant<'_>>>,
         version_id: u64,
         flags: u32,
     ) -> zbus::Result<()>;
@@ -175,7 +175,7 @@ pub trait Device {
 
     /// LldpNeighbors property
     #[zbus(property)]
-    fn lldp_neighbors(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
+    fn lldp_neighbors(&self) -> zbus::Result<Vec<HashMap<String, OwnedVariant>>>;
 
     /// Managed property
     #[zbus(property)]

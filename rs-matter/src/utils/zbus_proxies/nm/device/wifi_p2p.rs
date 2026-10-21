@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, Variant};
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.Device.WifiP2P",
@@ -28,7 +28,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
 )]
 pub trait WifiP2P {
     /// StartFind method
-    fn start_find(&self, options: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn start_find(&self, options: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// StopFind method
     fn stop_find(&self) -> zbus::Result<()>;

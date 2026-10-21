@@ -23,7 +23,7 @@ use std::collections::HashMap;
 
 use zbus::{
     proxy,
-    zvariant::{ObjectPath, OwnedObjectPath},
+    wire::{ObjectPath, OwnedObjectPath},
 };
 
 #[proxy(

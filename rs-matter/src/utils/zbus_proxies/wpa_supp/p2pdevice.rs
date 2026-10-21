@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1.Interface.P2PDevice",
@@ -30,26 +30,26 @@ pub trait P2PDevice {
     /// AddPersistentGroup method
     fn add_persistent_group(
         &self,
-        args: HashMap<&str, &Value<'_>>,
+        args: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<OwnedObjectPath>;
 
     /// AddService method
-    fn add_service(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn add_service(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// Connect method
-    fn connect(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<String>;
+    fn connect(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<String>;
 
     /// DeleteService method
-    fn delete_service(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn delete_service(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// Disconnect method
     fn disconnect(&self) -> zbus::Result<()>;
 
     /// ExtendedListen method
-    fn extended_listen(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn extended_listen(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// Find method
-    fn find(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn find(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// Flush method
     fn flush(&self) -> zbus::Result<()>;
@@ -58,19 +58,19 @@ pub trait P2PDevice {
     fn flush_service(&self) -> zbus::Result<()>;
 
     /// GroupAdd method
-    fn group_add(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn group_add(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// Cancel method
     fn cancel(&self) -> zbus::Result<()>;
 
     /// Invite method
-    fn invite(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn invite(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// Listen method
     fn listen(&self, timeout: i32) -> zbus::Result<()>;
 
     /// PresenceRequest method
-    fn presence_request(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn presence_request(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// ProvisionDiscoveryRequest method
     fn provision_discovery_request(
@@ -83,7 +83,7 @@ pub trait P2PDevice {
     fn reject_peer(&self, peer: &ObjectPath<'_>) -> zbus::Result<()>;
 
     /// RemoveClient method
-    fn remove_client(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn remove_client(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// RemoveAllPersistentGroups method
     fn remove_all_persistent_groups(&self) -> zbus::Result<()>;
@@ -98,10 +98,10 @@ pub trait P2PDevice {
     fn service_discovery_external(&self, arg: i32) -> zbus::Result<()>;
 
     /// ServiceDiscoveryRequest method
-    fn service_discovery_request(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<u64>;
+    fn service_discovery_request(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<u64>;
 
     /// ServiceDiscoveryResponse method
-    fn service_discovery_response(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn service_discovery_response(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// ServiceUpdate method
     fn service_update(&self) -> zbus::Result<()>;
@@ -119,7 +119,7 @@ pub trait P2PDevice {
 
     /// GONegotiationFailure signal
     #[zbus(signal, name = "GONegotiationFailure")]
-    fn gonegotiation_failure(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn gonegotiation_failure(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// GONegotiationRequest signal
     #[zbus(signal, name = "GONegotiationRequest")]
@@ -132,19 +132,19 @@ pub trait P2PDevice {
 
     /// GONegotiationSuccess signal
     #[zbus(signal, name = "GONegotiationSuccess")]
-    fn gonegotiation_success(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn gonegotiation_success(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// GroupFinished signal
     #[zbus(signal)]
-    fn group_finished(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn group_finished(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// GroupStarted signal
     #[zbus(signal)]
-    fn group_started(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn group_started(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// InvitationResult signal
     #[zbus(signal)]
-    fn invitation_result(&self, invite_result: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn invitation_result(&self, invite_result: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// P2PStateChanged signal
     #[zbus(signal, name = "P2PStateChanged")]
@@ -155,7 +155,7 @@ pub trait P2PDevice {
     fn persistent_group_added(
         &self,
         path: ObjectPath<'_>,
-        properties: HashMap<&str, Value<'_>>,
+        properties: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// PersistentGroupRemoved signal
@@ -210,20 +210,23 @@ pub trait P2PDevice {
 
     /// ServiceDiscoveryRequest signal
     #[zbus(signal)]
-    fn service_discovery_request(&self, sd_request: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn service_discovery_request(&self, sd_request: HashMap<&str, Variant<'_>>)
+        -> zbus::Result<()>;
 
     /// ServiceDiscoveryResponse signal
     #[zbus(signal)]
-    fn service_discovery_response(&self, sd_response: HashMap<&str, Value<'_>>)
-        -> zbus::Result<()>;
+    fn service_discovery_response(
+        &self,
+        sd_response: HashMap<&str, Variant<'_>>,
+    ) -> zbus::Result<()>;
 
     /// WpsFailed signal
     #[zbus(signal)]
-    fn wps_failed(&self, name: &str, args: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn wps_failed(&self, name: &str, args: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// InvitationReceived signal
     #[zbus(signal)]
-    fn invitation_received(&self, args: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn invitation_received(&self, args: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// GroupFormationFailure signal
     #[zbus(signal)]
@@ -235,12 +238,12 @@ pub trait P2PDevice {
 
     /// P2PDeviceConfig property
     #[zbus(property, name = "P2PDeviceConfig")]
-    fn p2pdevice_config(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn p2pdevice_config(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
     #[zbus(property, name = "P2PDeviceConfig")]
     fn set_p2pdevice_config(
         &self,
-        // TODO value: HashMap<&str, &Value<'_>>,
-        value: Value<'_>,
+        // TODO value: HashMap<&str, &Variant<'_>>,
+        value: Variant<'_>,
     ) -> zbus::Result<()>;
 
     /// PeerGO property

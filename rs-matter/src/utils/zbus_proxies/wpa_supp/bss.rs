@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::wire::{OwnedVariant, Variant};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1.BSS",
@@ -29,7 +29,7 @@ use zbus::zvariant::{OwnedValue, Value};
 pub trait BSS {
     /// PropertiesChanged signal
     #[zbus(signal)]
-    fn properties_changed(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn properties_changed(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// BSSID property
     #[zbus(property, name = "BSSID")]
@@ -41,15 +41,15 @@ pub trait BSS {
 
     /// WPA property
     #[zbus(property, name = "WPA")]
-    fn wpa(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn wpa(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     /// RSN property
     #[zbus(property, name = "RSN")]
-    fn rsn(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn rsn(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     /// WPS property
     #[zbus(property, name = "WPS")]
-    fn wps(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn wps(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     /// IEs property
     #[zbus(property, name = "IEs")]

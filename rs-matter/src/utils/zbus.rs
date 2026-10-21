@@ -27,12 +27,6 @@ impl From<zbus::Error> for crate::error::Error {
     }
 }
 
-impl From<zbus::zvariant::Error> for crate::error::Error {
-    fn from(e: zbus::zvariant::Error) -> Self {
-        Self::new_with_details(ErrorCode::DBusError, Box::new(e))
-    }
-}
-
 impl From<zbus::fdo::Error> for crate::error::Error {
     fn from(e: zbus::fdo::Error) -> Self {
         Self::new_with_details(ErrorCode::DBusError, Box::new(e))

@@ -21,7 +21,7 @@
 //! <https://github.com/openthread/ot-br-posix/blob/main/src/dbus/server/introspect.xml>.
 //!
 //! Covers the full `io.openthread.BorderRouter` surface. D-Bus structs are
-//! mapped onto named Rust structs that derive [`zvariant::Type`] + serde so
+//! mapped onto named Rust structs that derive [`wire::Type`] + serde so
 //! the wire encoding stays identical to a positional tuple while the Rust
 //! side gets named fields and per-field documentation. See
 //! [`MdnsTelemetryInfo`] for a note about one OTBR introspection-XML quirk.
@@ -35,7 +35,7 @@
 use serde::{Deserialize, Serialize};
 use zbus::{
     proxy,
-    zvariant::{OwnedValue, Type, Value},
+    wire::{OwnedVariant, Type, Variant},
 };
 
 // ---------- shared data types ----------
@@ -44,14 +44,14 @@ use zbus::{
 /// OTBR D-Bus surface. Used standalone (`RemoveExternalRoute`,
 /// `RemoveOnMeshPrefix`) and as a sub-struct inside [`ExternalRoute`] and
 /// [`OnMeshPrefix`].
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant)]
 pub struct Ip6Prefix {
     pub prefix_bytes: Vec<u8>,
     pub prefix_length: u8,
 }
 
 /// Single entry returned by [`BorderRouterProxy::scan`].
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant)]
 pub struct ScanResult {
     pub ext_address: u64,
     pub network_name: String,
@@ -70,7 +70,9 @@ pub struct ScanResult {
 /// Single entry returned by [`BorderRouterProxy::energy_scan`].
 ///
 /// `max_rssi` is signed semantically (`int8_t`); cast `as i8` at use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct EnergyScanResult {
     pub channel: u8,
     pub max_rssi: u8,
@@ -82,7 +84,7 @@ pub struct EnergyScanResult {
 ///
 /// `rloc16` and `next_hop_is_self` are ignored by OTBR per the upstream
 /// source comments.
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant)]
 pub struct ExternalRoute {
     pub prefix: Ip6Prefix,
     pub rloc16: u16,
@@ -93,7 +95,7 @@ pub struct ExternalRoute {
 
 /// On-mesh prefix — argument to [`BorderRouterProxy::add_on_mesh_prefix`]
 /// and element of [`BorderRouterProxy::on_mesh_prefixes`].
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant)]
 pub struct OnMeshPrefix {
     pub prefix: Ip6Prefix,
     pub rloc16: u16,
@@ -110,7 +112,9 @@ pub struct OnMeshPrefix {
 }
 
 /// Network-leader data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct LeaderData {
     pub partition_id: u32,
     pub weighting: u8,
@@ -120,7 +124,9 @@ pub struct LeaderData {
 }
 
 /// Single entry of [`BorderRouterProxy::channel_monitor_channel_quality_map`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct ChannelQuality {
     pub channel: u8,
     pub occupancy: u16,
@@ -129,7 +135,9 @@ pub struct ChannelQuality {
 /// One row of [`BorderRouterProxy::child_table`].
 ///
 /// `average_rssi` and `last_rssi` are signed semantically; cast `as i8`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct ChildEntry {
     pub ext_address: u64,
     pub timeout: u32,
@@ -153,7 +161,9 @@ pub struct ChildEntry {
 /// One row of [`BorderRouterProxy::neighbor_table`].
 ///
 /// `average_rssi` and `last_rssi` are signed semantically; cast `as i8`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct NeighborEntry {
     pub ext_address: u64,
     pub age: u32,
@@ -176,7 +186,9 @@ pub struct NeighborEntry {
 
 /// IPv6-level packet counters — the [`BorderRouterProxy::ip6_counters`]
 /// property.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct Ip6Counters {
     pub ip_tx_success: u32,
     pub ip_rx_success: u32,
@@ -185,7 +197,9 @@ pub struct Ip6Counters {
 }
 
 /// Current link mode flags — getter / setter type for `LinkMode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct LinkMode {
     /// Whether the radio receiver is on when the device is idle.
     pub rx_on_when_idle: bool,
@@ -196,7 +210,9 @@ pub struct LinkMode {
 }
 
 /// Per-host / per-service SRP lease counters used inside [`SrpServerInfo`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct SrpLeaseCounters {
     pub fresh_count: u32,
     pub deleted_count: u32,
@@ -207,7 +223,9 @@ pub struct SrpLeaseCounters {
 }
 
 /// SRP response counters used inside [`SrpServerInfo`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct SrpResponseCounters {
     pub success: u32,
     pub server_failure: u32,
@@ -218,7 +236,9 @@ pub struct SrpResponseCounters {
 }
 
 /// SRP server status & counters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct SrpServerInfo {
     pub state: u8,
     pub port: u16,
@@ -229,7 +249,9 @@ pub struct SrpServerInfo {
 }
 
 /// DNS-SD counters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct DnssdCounters {
     pub success: u32,
     pub server_failure: u32,
@@ -241,7 +263,9 @@ pub struct DnssdCounters {
 }
 
 /// Radio spinel metrics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct RadioSpinelMetrics {
     pub rcp_timeout_count: u32,
     pub rcp_unexpected_reset_count: u32,
@@ -250,7 +274,9 @@ pub struct RadioSpinelMetrics {
 }
 
 /// RCP interface metrics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct RcpInterfaceMetrics {
     pub rcp_interface_type: u8,
     pub transferred_frame_count: u64,
@@ -264,7 +290,9 @@ pub struct RcpInterfaceMetrics {
 
 /// Per-protocol NAT64 packet/byte counters, used inside
 /// [`Nat64ProtocolCounters`] and [`Nat64Mapping`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct Nat64Counters {
     pub m_4to6_packets: u64,
     pub m_4to6_bytes: u64,
@@ -273,7 +301,9 @@ pub struct Nat64Counters {
 }
 
 /// NAT64 counters split by IP protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct Nat64ProtocolCounters {
     pub total: Nat64Counters,
     pub icmp: Nat64Counters,
@@ -282,14 +312,18 @@ pub struct Nat64ProtocolCounters {
 }
 
 /// Per-direction NAT64 drop counters used inside [`Nat64ErrorCounters`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct Nat64ErrorPair {
     pub m_4to6_packets: u64,
     pub m_6to4_packets: u64,
 }
 
 /// NAT64 drop counters by error class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct Nat64ErrorCounters {
     /// Packet drop for unknown reasons.
     pub unknown: Nat64ErrorPair,
@@ -302,7 +336,7 @@ pub struct Nat64ErrorCounters {
 }
 
 /// Single entry of [`BorderRouterProxy::nat64_mappings`].
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant)]
 pub struct Nat64Mapping {
     pub id: u64,
     pub ip4: Vec<u8>,
@@ -312,21 +346,25 @@ pub struct Nat64Mapping {
 }
 
 /// NAT64 state — `(prefix_manager_state, translator_state)`.
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant)]
 pub struct Nat64State {
     pub prefix_manager_state: String,
     pub translator_state: String,
 }
 
 /// `(packets, bytes)` — used in [`BorderRoutingCounters`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct PacketByteCounter {
     pub packets: u64,
     pub bytes: u64,
 }
 
 /// Border-routing counters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct BorderRoutingCounters {
     pub inbound_unicast: PacketByteCounter,
     pub inbound_multicast: PacketByteCounter,
@@ -348,7 +386,7 @@ pub struct BorderRoutingCounters {
 
 /// Information about the infrastructure-link interface (the network the
 /// OTBR forwards Thread traffic onto).
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant)]
 pub struct InfraLinkInfo {
     pub name: String,
     pub is_up: bool,
@@ -360,7 +398,9 @@ pub struct InfraLinkInfo {
 }
 
 /// TREL packet statistics used inside [`TrelInfo`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct TrelPacketStats {
     pub tx_packets: u64,
     pub tx_bytes: u64,
@@ -370,7 +410,9 @@ pub struct TrelPacketStats {
 }
 
 /// TREL link information.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct TrelInfo {
     pub enabled: bool,
     pub num_trel_peers: u16,
@@ -379,7 +421,7 @@ pub struct TrelInfo {
 
 /// `(key, value)` row passed to
 /// [`BorderRouterProxy::update_vendor_mesh_cop_txt_entries`].
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant)]
 pub struct VendorTxtEntry {
     pub key: String,
     pub value: Vec<u8>,
@@ -391,9 +433,11 @@ pub struct VendorTxtEntry {
 /// NB: deliberately 32 fields, NOT the 34 of otbr's own `MacCounters` C++
 /// struct: otbr's D-Bus marshaling of the property omits
 /// `mTxDirectMaxRetryExpiry` / `mTxIndirectMaxRetryExpiry` (wire signature
-/// `(u{32})`, verified empirically), and the zvariant derive PANICS - rather
+/// `(u{32})`, verified empirically), and the wire `Type` derive panics—rather
 /// than erroring - on a field-arity mismatch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct MacCounters {
     pub tx_total: u32,
     pub tx_unicast: u32,
@@ -431,7 +475,9 @@ pub struct MacCounters {
 
 /// Radio coexistence metrics — the [`BorderRouterProxy::radio_coex_metrics`]
 /// property.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct RadioCoexMetrics {
     /// Number of grant glitches.
     pub num_grant_glitch: u32,
@@ -475,7 +521,9 @@ pub struct RadioCoexMetrics {
 
 /// mDNS per-class response counters — used four times inside
 /// [`MdnsTelemetryInfo`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct MdnsResponseCounters {
     pub success: u32,
     pub not_found: u32,
@@ -496,8 +544,10 @@ pub struct MdnsResponseCounters {
 /// well-formed signature for a single D-Bus value; the wire emission is
 /// almost certainly the natural outer struct (`((uuuuuuuu)…uuuu)`), which is
 /// what this Rust struct maps to. If decoding fails against a live OTBR,
-/// switch the property's return type to [`OwnedValue`] and decode ad-hoc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Value, OwnedValue)]
+/// switch the property's return type to [`OwnedVariant`] and decode ad-hoc.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Type, Serialize, Deserialize, Variant, OwnedVariant,
+)]
 pub struct MdnsTelemetryInfo {
     pub host_registration: MdnsResponseCounters,
     pub service_registration: MdnsResponseCounters,

@@ -23,7 +23,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use alloc::sync::Arc;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixDatagram;
 
@@ -40,7 +40,7 @@ use uuid::Uuid;
 use zbus::fdo::{ObjectManager, ObjectManagerProxy};
 use zbus::names::OwnedInterfaceName;
 use zbus::object_server::Interface;
-use zbus::zvariant::{ObjectPath, OwnedFd, OwnedObjectPath, OwnedValue, Value};
+use zbus::wire::{ObjectPath, OwnedFd, OwnedObjectPath, OwnedVariant, Variant};
 use zbus::{interface, Connection};
 
 use crate::error::{Error, ErrorCode};
@@ -93,8 +93,8 @@ async fn device_proxy<'a>(
     // destination defaults to the interface name (`org.bluez.Device1`) unless we
     // set it explicitly - it must be `org.bluez`.
     Ok(DeviceProxy::builder(connection)
-        .destination("org.bluez")?
-        .path(path.clone())?
+        .destination("org.bluez")
+        .path(path.clone())
         .build()
         .await?)
 }
@@ -106,7 +106,7 @@ async fn device_proxy<'a>(
 /// all we want is to find the objects we care about. Returns `None` if the object
 /// does not implement `iface`, or has no readable `UUID`.
 fn iface_uuid(
-    interfaces: &HashMap<OwnedInterfaceName, HashMap<String, OwnedValue>>,
+    interfaces: &BTreeMap<OwnedInterfaceName, HashMap<String, OwnedVariant>>,
     iface: &str,
 ) -> Option<String> {
     let uuid = interfaces.get(iface)?.get("UUID")?;
@@ -120,8 +120,8 @@ async fn gatt_characteristic_proxy<'a>(
     path: &OwnedObjectPath,
 ) -> Result<GattCharacteristicProxy<'a>, Error> {
     Ok(GattCharacteristicProxy::builder(connection)
-        .destination("org.bluez")?
-        .path(path.clone())?
+        .destination("org.bluez")
+        .path(path.clone())
         .build()
         .await?)
 }
@@ -341,8 +341,8 @@ where
     // instead filter to the Matter service UUID in `report_matching_devices` when
     // we inspect each device's advertised service data - which we have to do
     // anyway to parse the advertisement.
-    let transport = Value::from("le");
-    let mut discovery_filter: HashMap<&str, &Value<'_>> = HashMap::new();
+    let transport = Variant::from("le");
+    let mut discovery_filter: HashMap<&str, &Variant<'_>> = HashMap::new();
     discovery_filter.insert("Transport", &transport);
 
     adapter.set_discovery_filter(discovery_filter).await?;
@@ -459,7 +459,7 @@ async fn process_c1_writes(
     // failed` on ESP-IDF, then a BTP sequence gap and a disconnect). Awaiting the
     // Write Response before sending the next segment prevents that.
     let mut options = HashMap::new();
-    let write_type = Value::from("request");
+    let write_type = Variant::from("request");
     options.insert("type", &write_type);
 
     loop {
@@ -528,7 +528,8 @@ where
             continue;
         };
 
-        let Ok(service_data) = <HashMap<String, OwnedValue>>::try_from(service_data.clone()) else {
+        let Ok(service_data) = <HashMap<String, OwnedVariant>>::try_from(service_data.clone())
+        else {
             continue;
         };
 
@@ -947,10 +948,10 @@ impl AdObj {
     }
 
     #[zbus(property)]
-    pub fn service_data(&self) -> HashMap<String, OwnedValue> {
+    pub fn service_data(&self) -> HashMap<String, OwnedVariant> {
         once((
             BLUEZ_MATTER_BLE_SERVICE_UUID.to_string(),
-            unwrap!(Value::Array(self.service_data.as_slice().into()).try_to_owned()),
+            unwrap!(Variant::Array(self.service_data.as_slice().into()).try_to_owned()),
         ))
         .collect()
     }
@@ -961,7 +962,7 @@ struct ServiceObj;
 
 impl ServiceObj {
     /// Extract the `mtu` value from the provided dictionary
-    fn dict_mtu(dict: &HashMap<&str, Value<'_>>) -> zbus::fdo::Result<u16> {
+    fn dict_mtu(dict: &HashMap<&str, Variant<'_>>) -> zbus::fdo::Result<u16> {
         let mtu = dict
             .get("mtu")
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs("`mtu` not present in dict".into()))?;
@@ -972,7 +973,7 @@ impl ServiceObj {
     }
 
     /// Extract the peer address value from the provided dictionary
-    fn dict_peer_addr(dict: &HashMap<&str, Value<'_>>) -> zbus::fdo::Result<BtAddr> {
+    fn dict_peer_addr(dict: &HashMap<&str, Variant<'_>>) -> zbus::fdo::Result<BtAddr> {
         let device = dict
             .get("device")
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs("`device` not present in dict".into()))?;
@@ -1055,8 +1056,8 @@ impl C1Obj {
 
     async fn write_value(
         &self,
-        value: &[u8],
-        options: HashMap<&str, Value<'_>>,
+        value: Vec<u8>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> zbus::fdo::Result<()> {
         let peer_addr = ServiceObj::dict_peer_addr(&options)?;
 
@@ -1067,7 +1068,7 @@ impl C1Obj {
         );
 
         self.callback
-            .send((ServiceObj::dict_mtu(&options)?, peer_addr, value.to_vec()))
+            .send((ServiceObj::dict_mtu(&options)?, peer_addr, value))
             .await
             .unwrap();
 
@@ -1124,7 +1125,7 @@ impl C2Obj {
 
     async fn acquire_notify(
         &self,
-        options: HashMap<&str, Value<'_>>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> zbus::fdo::Result<(OwnedFd, u16)> {
         let peer_addr = ServiceObj::dict_peer_addr(&options)?;
         let mtu = ServiceObj::dict_mtu(&options)?;

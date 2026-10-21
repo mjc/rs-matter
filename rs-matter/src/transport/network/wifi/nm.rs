@@ -31,7 +31,7 @@ use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
 
 use uuid::Uuid;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, Variant};
 use zbus::Connection;
 
 use crate::dm::clusters::net_comm::{
@@ -272,7 +272,7 @@ impl NetCtl for NetMgrCtl<'_> {
 
         let mut args = HashMap::new();
 
-        let active = Value::from("active");
+        let active = Variant::from("active");
         args.insert("Type", &active);
 
         let ssids = network.map(|network| vec![network.to_vec()].into());
@@ -376,7 +376,7 @@ impl NetCtl for NetMgrCtl<'_> {
         let args = args
             .iter()
             .map(|(k, v)| (*k, (*v).iter().map(|(k, v)| (*k, *v)).collect()))
-            .collect::<HashMap<&str, HashMap<&str, &Value<'_>>>>();
+            .collect::<HashMap<&str, HashMap<&str, &Variant<'_>>>>();
 
         let device_path = self.device().await?;
         let (_, net_conn_path) = mgr

@@ -17,7 +17,7 @@
 
 //! # D-Bus interface proxy for: `org.bluez.GattService1`
 
-use zbus::{proxy, zvariant::OwnedObjectPath};
+use zbus::{proxy, wire::OwnedObjectPath};
 
 #[proxy(interface = "org.bluez.GattService1", assume_defaults = true)]
 pub trait GattService {

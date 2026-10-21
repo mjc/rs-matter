@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1.Interface",
@@ -31,7 +31,7 @@ pub trait Interface {
     fn add_blob(&self, name: &str, data: &[u8]) -> zbus::Result<()>;
 
     /// AddNetwork method
-    fn add_network(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<OwnedObjectPath>;
+    fn add_network(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<OwnedObjectPath>;
 
     /// AutoScan method
     fn auto_scan(&self, arg: &str) -> zbus::Result<()>;
@@ -77,7 +77,7 @@ pub trait Interface {
     fn remove_network(&self, path: &ObjectPath<'_>) -> zbus::Result<()>;
 
     /// Scan method
-    fn scan(&self, args: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn scan(&self, args: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// SelectNetwork method
     fn select_network(&self, path: &ObjectPath<'_>) -> zbus::Result<()>;
@@ -91,7 +91,7 @@ pub trait Interface {
     ) -> zbus::Result<()>;
 
     /// SignalPoll method
-    fn signal_poll(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn signal_poll(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     /// SubscribeProbeReq method
     fn subscribe_probe_req(&self) -> zbus::Result<()>;
@@ -120,7 +120,7 @@ pub trait Interface {
     fn bssadded(
         &self,
         path: ObjectPath<'_>,
-        properties: HashMap<&str, Value<'_>>,
+        properties: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// BSSRemoved signal
@@ -137,7 +137,7 @@ pub trait Interface {
 
     /// Certification signal
     #[zbus(signal)]
-    fn certification(&self, certification: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn certification(&self, certification: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// EAP signal
     #[zbus(signal, name = "EAP")]
@@ -152,7 +152,7 @@ pub trait Interface {
     fn network_added(
         &self,
         path: ObjectPath<'_>,
-        properties: HashMap<&str, Value<'_>>,
+        properties: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// NetworkRemoved signal
@@ -165,11 +165,11 @@ pub trait Interface {
 
     /// ProbeRequest signal
     #[zbus(signal)]
-    fn probe_request(&self, args: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn probe_request(&self, args: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// PropertiesChanged signal
     #[zbus(signal)]
-    fn properties_changed(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn properties_changed(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// ScanDone signal
     #[zbus(signal)]
@@ -216,7 +216,7 @@ pub trait Interface {
 
     /// Capabilities property
     #[zbus(property)]
-    fn capabilities(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn capabilities(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     /// Country property
     #[zbus(property)]

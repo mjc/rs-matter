@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use zbus::{
     proxy,
-    zvariant::{ObjectPath, Value},
+    wire::{ObjectPath, Variant},
 };
 
 #[proxy(interface = "org.bluez.Media1", default_service = "org.bluez")]
@@ -30,21 +30,21 @@ pub trait Media {
     fn register_application(
         &self,
         application: &ObjectPath<'_>,
-        options: HashMap<&str, &Value<'_>>,
+        options: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// RegisterEndpoint method
     fn register_endpoint(
         &self,
         endpoint: &ObjectPath<'_>,
-        properties: HashMap<&str, &Value<'_>>,
+        properties: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// RegisterPlayer method
     fn register_player(
         &self,
         player: &ObjectPath<'_>,
-        properties: HashMap<&str, &Value<'_>>,
+        properties: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// UnregisterApplication method

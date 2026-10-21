@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use zbus::{
     proxy,
-    zvariant::{ObjectPath, OwnedObjectPath, Value},
+    wire::{ObjectPath, OwnedObjectPath, Variant},
 };
 
 #[proxy(
@@ -33,7 +33,7 @@ pub trait HealthManager {
     /// CreateApplication method
     fn create_application(
         &self,
-        config: HashMap<&str, &Value<'_>>,
+        config: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<OwnedObjectPath>;
 
     /// DestroyApplication method

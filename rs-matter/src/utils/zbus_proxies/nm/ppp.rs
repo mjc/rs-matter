@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::Value;
+use zbus::wire::Variant;
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.PPP",
@@ -31,10 +31,10 @@ pub trait PPP {
     fn need_secrets(&self) -> zbus::Result<(String, String)>;
 
     /// SetIpv4Config method
-    fn set_ipv4_config(&self, config: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn set_ipv4_config(&self, config: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// SetIpv6Config method
-    fn set_ipv6_config(&self, config: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn set_ipv6_config(&self, config: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// SetState method
     fn set_state(&self, state: u32) -> zbus::Result<()>;

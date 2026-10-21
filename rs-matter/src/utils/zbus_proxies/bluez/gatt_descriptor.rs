@@ -21,16 +21,16 @@ use std::collections::HashMap;
 
 use zbus::{
     proxy,
-    zvariant::{OwnedObjectPath, Value},
+    wire::{OwnedObjectPath, Variant},
 };
 
 #[proxy(interface = "org.bluez.GattDescriptor1", assume_defaults = true)]
 pub trait GattDescriptor {
     /// ReadValue method
-    fn read_value(&self, options: HashMap<&str, &Value<'_>>) -> zbus::Result<Vec<u8>>;
+    fn read_value(&self, options: HashMap<&str, &Variant<'_>>) -> zbus::Result<Vec<u8>>;
 
     /// WriteValue method
-    fn write_value(&self, value: &[u8], options: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn write_value(&self, value: &[u8], options: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// Characteristic property
     #[zbus(property)]

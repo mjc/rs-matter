@@ -19,7 +19,7 @@
 
 use zbus::{
     proxy,
-    zvariant::{ObjectPath, Value},
+    wire::{ObjectPath, Variant},
 };
 
 #[proxy(interface = "org.bluez.Adapter1", default_service = "org.bluez")]
@@ -33,7 +33,7 @@ pub trait Adapter {
     /// SetDiscoveryFilter method
     fn set_discovery_filter(
         &self,
-        properties: std::collections::HashMap<&str, &Value<'_>>,
+        properties: std::collections::HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// StartDiscovery method

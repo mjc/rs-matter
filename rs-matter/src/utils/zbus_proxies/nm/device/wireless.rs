@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
+use zbus::wire::{ObjectPath, OwnedObjectPath, Variant};
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.Device.Wireless",
@@ -34,7 +34,7 @@ pub trait Wireless {
     fn get_all_access_points(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
 
     /// RequestScan method
-    fn request_scan(&self, options: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn request_scan(&self, options: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 
     /// AccessPointAdded signal
     #[zbus(signal)]

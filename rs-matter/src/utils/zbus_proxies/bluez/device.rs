@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use zbus::{
     proxy,
-    zvariant::{OwnedObjectPath, OwnedValue},
+    wire::{OwnedObjectPath, OwnedVariant},
 };
 
 #[proxy(interface = "org.bluez.Device1", assume_defaults = true)]
@@ -90,7 +90,7 @@ pub trait Device {
 
     /// ManufacturerData property
     #[zbus(property)]
-    fn manufacturer_data(&self) -> zbus::Result<HashMap<u16, OwnedValue>>;
+    fn manufacturer_data(&self) -> zbus::Result<HashMap<u16, OwnedVariant>>;
 
     /// Modalias property
     #[zbus(property)]
@@ -110,7 +110,7 @@ pub trait Device {
 
     /// ServiceData property
     #[zbus(property)]
-    fn service_data(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn service_data(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     /// ServicesResolved property
     #[zbus(property)]

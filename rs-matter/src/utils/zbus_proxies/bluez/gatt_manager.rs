@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use zbus::{
     proxy,
-    zvariant::{ObjectPath, Value},
+    wire::{ObjectPath, Variant},
 };
 
 #[proxy(interface = "org.bluez.GattManager1", default_service = "org.bluez")]
@@ -30,7 +30,7 @@ pub trait GattManager {
     fn register_application(
         &self,
         application: &ObjectPath<'_>,
-        options: HashMap<&str, &Value<'_>>,
+        options: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// UnregisterApplication method

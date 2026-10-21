@@ -19,7 +19,7 @@
 
 pub mod avahi;
 // Mirrors the gating of its only consumer, `transport::network::btp::gatt::bluez`.
-// Needed because `zvariant::OwnedFd` is `#[cfg(unix)]`, so this module does not
+// Needed because `wire::OwnedFd` is `#[cfg(unix)]`, so this module does not
 // build on a Windows host.
 #[cfg(target_os = "linux")]
 pub mod bluez;

@@ -19,10 +19,10 @@
 
 use std::collections::HashMap;
 
-use zbus::{proxy, zvariant::Value};
+use zbus::{proxy, wire::Variant};
 
 #[proxy(interface = "org.bluez.ThermometerWatcher1", assume_defaults = true)]
 pub trait ThermometerWatcher {
     /// MeasurementReceived method
-    fn measurement_received(&self, measurement: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+    fn measurement_received(&self, measurement: HashMap<&str, &Variant<'_>>) -> zbus::Result<()>;
 }

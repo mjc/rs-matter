@@ -19,7 +19,7 @@
 
 #![allow(clippy::type_complexity)]
 
-use zbus::{proxy, zvariant::OwnedObjectPath};
+use zbus::{proxy, wire::OwnedObjectPath};
 
 #[proxy(
     interface = "org.freedesktop.Avahi.Server2",

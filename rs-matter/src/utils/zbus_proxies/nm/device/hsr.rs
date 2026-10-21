@@ -17,7 +17,7 @@
 
 //! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Hsr`
 
-use zbus::{proxy, zvariant::OwnedObjectPath};
+use zbus::{proxy, wire::OwnedObjectPath};
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.Device.Hsr",

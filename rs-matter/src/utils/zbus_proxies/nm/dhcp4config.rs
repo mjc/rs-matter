@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::OwnedValue;
+use zbus::wire::OwnedVariant;
 
 #[proxy(
     interface = "org.freedesktop.NetworkManager.DHCP4Config",
@@ -29,5 +29,5 @@ use zbus::zvariant::OwnedValue;
 pub trait DHCP4Config {
     /// Options property
     #[zbus(property)]
-    fn options(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn options(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 }

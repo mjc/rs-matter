@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use zbus::proxy;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::wire::{OwnedVariant, Variant};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1.PersistentGroup",
@@ -29,9 +29,9 @@ use zbus::zvariant::{OwnedValue, Value};
 pub trait PersistentGroup {
     /// PropertiesChanged signal
     #[zbus(signal)]
-    fn properties_changed(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn properties_changed(&self, properties: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
 
     /// Properties property
     #[zbus(property, name = "Properties")]
-    fn props(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn props(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 }
