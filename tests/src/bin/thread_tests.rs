@@ -131,8 +131,8 @@ fn run() -> Result<(), Error> {
     let connection = futures_lite::future::block_on(async {
         match std::env::var("DBUS_SYSTEM_BUS_ADDRESS") {
             Ok(addr) => {
-                rs_matter::utils::zbus::connection::Builder::address(addr.as_str())?
-                    .auth_mechanism(rs_matter::utils::zbus::AuthMechanism::Anonymous)
+                rs_matter::utils::zbus::connection::Builder::address(addr.as_str())
+                    .auth_mechanism(rs_matter::utils::zbus::connection::AuthMechanism::Anonymous)
                     .build()
                     .await
             }
@@ -257,7 +257,6 @@ fn run() -> Result<(), Error> {
 /// The two `TxDirect/IndirectMaxRetryExpiryCount` attributes stay out (and
 /// unclaimed in the `.pics`): otbr's D-Bus marshaling of the MAC counters
 /// omits them.
-
 const THREAD_DIAG_CLUSTER: Cluster<'static> = thread_diag::FULL_CLUSTER
     .with_features(thread_diag::Feature::MAC_COUNTS.bits())
     .with_attrs(rs_matter::with!(
