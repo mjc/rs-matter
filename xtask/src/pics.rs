@@ -2049,14 +2049,15 @@ fn load_templates(path: &Path) -> anyhow::Result<Vec<(String, String)>> {
 
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i)?;
-            if !entry.is_file() || !entry.name().to_ascii_lowercase().ends_with(".xml") {
+            let entry_name = entry.name()?.into_owned();
+            if !entry.is_file() || !entry_name.to_ascii_lowercase().ends_with(".xml") {
                 continue;
             }
 
-            let name = Path::new(entry.name())
+            let name = Path::new(&entry_name)
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| entry.name().to_string());
+                .unwrap_or(entry_name);
 
             let mut xml = String::new();
             entry
@@ -2150,7 +2151,7 @@ fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{NON_CLUSTER_ROOTS, PICS_ROOTS};
+    use super::{load_templates, write_templates, NON_CLUSTER_ROOTS, PICS_ROOTS};
 
     /// The table maps PICS roots onto cluster IDs, and `resolve` looks a root up
     /// by name. A duplicate ID therefore answers one cluster's items against
@@ -2211,5 +2212,26 @@ mod tests {
                 "{root} is in NON_CLUSTER_ROOTS but also mapped in PICS_ROOTS"
             );
         }
+    }
+
+    #[test]
+    fn zip_templates_roundtrip_nested_xml_by_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("templates.zip");
+        let templates = vec![
+            ("clusters/second.xml".to_string(), "<second/>".to_string()),
+            ("clusters/ignored.txt".to_string(), "ignore me".to_string()),
+            ("network/first.XML".to_string(), "<first/>".to_string()),
+        ];
+
+        write_templates(&path, &templates).unwrap();
+
+        assert_eq!(
+            load_templates(&path).unwrap(),
+            vec![
+                ("first.XML".to_string(), "<first/>".to_string()),
+                ("second.xml".to_string(), "<second/>".to_string()),
+            ]
+        );
     }
 }
