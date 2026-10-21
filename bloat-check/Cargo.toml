@@ -40,6 +40,7 @@ static_cell = "2"
 critical-section = "1"
 embassy-executor = { version = "0.10", features = ["executor-thread"] }
 rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto", "case-responder-only"] }
+pin-init = { git = "https://github.com/Rust-for-Linux/pin-init", rev = "442d50b086ba1d4555997bee447e2c2b77321ac3", default-features = false }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
 log = { version = "0.4", features = ["max_level_info"] }
@@ -66,7 +67,7 @@ cortex-m-rt = "0.7"
 embassy-executor = { version = "0.10", features = ["platform-cortex-m"] }
 
 [target.thumbv7em-none-eabi.dependencies]
-hal = { package = "embassy-nrf", version = "0.10", default-features = false, features = ["defmt", "time-driver-rtc1", "time", "nrf52840"] }
+hal = { package = "embassy-nrf", version = "0.11", default-features = false, features = ["defmt", "time-driver-rtc1", "time", "nrf52840"] }
 
 [target.thumbv6m-none-eabi.dependencies]
 # `static_cell` 2 needs atomic CAS via `portable-atomic`; thumbv6m has none, so fall back to critical sections
@@ -74,6 +75,6 @@ portable-atomic = { version = "1", features = ["critical-section"] }
 hal = { package = "embassy-rp", version = "0.10", features = ["defmt", "unstable-pac", "time-driver", "rp2040"] }
 
 [target.riscv32imac-unknown-none-elf.dependencies]
-hal = { package = "esp-hal", version = "=1.1", features = ["defmt", "exception-handler", "unstable", "esp32c6"] }
-esp-rtos = { version = "=0.3", features = ["embassy", "esp32c6"] }
+hal = { package = "esp-hal", version = "=1.2.2", features = ["defmt", "exception-handler", "unstable", "esp32c6"] }
+esp-rtos = { version = "=0.4.0", features = ["embassy", "esp32c6"] }
 #embassy-executor = { version = "0.10", features = ["platform-riscv32"] }

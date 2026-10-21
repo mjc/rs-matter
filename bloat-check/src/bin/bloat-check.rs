@@ -246,8 +246,7 @@ fn main() -> ! {
 
         esp_rtos::start(
             hal::timer::timg::TimerGroup::new(p.TIMG0).timer0,
-            hal::interrupt::software::SoftwareInterruptControl::new(p.SW_INTERRUPT)
-                .software_interrupt0,
+            p.FROM_CPU_INTR0,
         );
     }
 
