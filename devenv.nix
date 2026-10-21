@@ -6,10 +6,12 @@
   packages = with pkgs; [ 
     git 
     cargo-expand
+    clang
+    cmake
+    openssl
     pkg-config
     dbus
     avahi.dev
-    libclang
     glibc.dev
   ];
 
