@@ -99,7 +99,7 @@ impl<T, G> Maybe<T, G> {
                 let some = value.is_some();
 
                 if let Some(value) = value {
-                    value.__init(addr_of_mut!((*slot).value) as _)?;
+                    <I as init::PinInit<T, E>>::__init(value, addr_of_mut!((*slot).value) as _)?;
                 }
 
                 // Only set this once the value is initialized
@@ -140,7 +140,7 @@ impl<T, G> Maybe<T, G> {
         unsafe {
             let slot = addr_of_mut!(*self);
 
-            value.__init(slot)
+            <I as init::PinInit<Self, E>>::__init(value, slot)
         }
     }
 

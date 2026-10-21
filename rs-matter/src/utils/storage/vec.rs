@@ -380,7 +380,7 @@ impl<T, const N: usize> Vec<T, N> {
             // use `ptr::write` to avoid running `T`'s destructor on the uninitialized memory
             let buffer: *mut T = self.buffer.as_mut_ptr().add(self.len) as _;
 
-            init.__init(buffer)?;
+            <I as crate::utils::init::PinInit<T, E>>::__init(init, buffer)?;
         }
 
         self.len += 1;

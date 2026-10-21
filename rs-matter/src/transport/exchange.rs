@@ -2107,6 +2107,7 @@ mod tests {
     #[test]
     fn test_initiate_plaintext_retries_after_eviction() {
         let matter = test_matter();
+        matter.transport().initialize_buffers().unwrap();
         let crypto = test_only_crypto();
         let peer = network::Address::new();
 
@@ -2132,6 +2133,7 @@ mod tests {
     #[test]
     fn test_initiate_plaintext_fails_when_no_session_can_be_evicted() {
         let matter = test_matter();
+        matter.transport().initialize_buffers().unwrap();
         let crypto = test_only_crypto();
         let peer = network::Address::new();
 

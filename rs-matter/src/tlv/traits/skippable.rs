@@ -19,7 +19,7 @@ use pin_init::init_from_closure;
 
 use crate::error::Error;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
-use crate::utils::init::{init, Init, InitDefault, IntoFallibleInit, PinInit};
+use crate::utils::init::{init, Init, InitDefault, IntoFallibleInit};
 
 /// A wrapper for a type `T` which might not always be present in the TLV stream.
 ///
@@ -119,9 +119,15 @@ where
         unsafe {
             init_from_closure(move |slot| {
                 if element.is_empty() {
-                    Self::init(T::init_default().into_fallible()).__init(slot)
+                    crate::utils::init::PinInit::<Self, Error>::__init(
+                        Self::init(T::init_default().into_fallible()),
+                        slot,
+                    )
                 } else {
-                    Self::init(T::init_from_tlv(element)).__init(slot)
+                    crate::utils::init::PinInit::<Self, Error>::__init(
+                        Self::init(T::init_from_tlv(element)),
+                        slot,
+                    )
                 }
             })
         }

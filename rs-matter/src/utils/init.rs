@@ -20,6 +20,9 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 pub use pin_init::init_zeroed as zeroed;
 /// Re-export `pin-init` for the crate's in-place initialization API.
+///
+/// Callers using `init!` must also depend directly on `pin-init` under its
+/// normal crate name because its macro expansions refer to `::pin_init`.
 pub use pin_init::*;
 
 /// Convert a closure returning `Result<impl Init<T, E>, E>` into an `Init<T, E>`.
@@ -27,7 +30,7 @@ pub fn into_init<F, T, E, I: Init<T, E>>(f: F) -> impl Init<T, E>
 where
     F: FnOnce() -> Result<I, E>,
 {
-    unsafe { init_from_closure(move |slot| f()?.__init(slot)) }
+    unsafe { init_from_closure(move |slot| <I as PinInit<T, E>>::__init(f()?, slot)) }
 }
 
 /// An extension trait for converting `Init<T, Infallible>` to a fallible `Init<T, E>`.
@@ -37,7 +40,7 @@ pub trait IntoFallibleInit<T>: Init<T, Infallible> {
     fn into_fallible<E>(self) -> impl Init<T, E> {
         unsafe {
             init_from_closure(move |slot| {
-                unwrap!(Self::__init(self, slot));
+                unwrap!(<Self as PinInit<T, Infallible>>::__init(self, slot));
 
                 Ok(())
             })
@@ -62,7 +65,7 @@ impl<T> UnsafeCellInit<T> for UnsafeCell<T> {
                 let slot: *mut T = slot as _;
 
                 // Initialize the value
-                unwrap!(value.__init(slot));
+                unwrap!(<I as PinInit<T, Infallible>>::__init(value, slot));
 
                 Ok(())
             })

@@ -2860,7 +2860,8 @@ fn allocate_large_buffer<const N: usize>(
 
     // SAFETY: this is a fresh allocation with the correct layout and alignment. It has no aliases,
     // and the in-place initializer fully initializes the Vec metadata before ownership transfers.
-    unsafe { Buffer::init().__init(pointer) }.unwrap_or_else(|never| match never {});
+    unsafe { crate::utils::init::PinInit::<Buffer<N>>::__init(Buffer::init(), pointer) }
+        .unwrap_or_else(|never| match never {});
 
     // SAFETY: initialization succeeded and this is the unique ownership transfer. Box will free
     // the same layout through the global allocator when dropped.
@@ -3039,6 +3040,7 @@ mod tests {
     #[test]
     fn try_get_if_rx_does_not_wait_for_or_claim_unmatched_packet() {
         let matter = test_matter();
+        matter.transport().initialize_buffers().unwrap();
         let transport = matter.transport();
         let mut packet = transport.rx.try_lock().unwrap();
         packet.buf.push(0xA5).unwrap();
@@ -3061,7 +3063,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(256 * 1024)
             .spawn(|| {
-                let matter = test_matter();
+                let matter = Matter::new_boxed(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
                 matter.transport().initialize_buffers().unwrap();
                 matter.transport().initialize_buffers().unwrap();
 
