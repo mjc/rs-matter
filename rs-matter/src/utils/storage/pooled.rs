@@ -161,7 +161,7 @@ where
             let buffers = unsafe { &mut *pool };
 
             while buffers.len() < N {
-                // In-place initialization: each slot is written directly via pinned-init,
+                // In-place initialization: each slot is written directly via pin-init,
                 // never materializing a full `T` value on the stack. This is essential when
                 // `T` is a large buffer (e.g. 1 MiB) that would otherwise overflow the stack.
                 unwrap!(buffers.push_init_unchecked(T::init_default()));

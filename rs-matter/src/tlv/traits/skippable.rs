@@ -15,11 +15,11 @@
  *    limitations under the License.
  */
 
-use pinned_init::init_from_closure;
+use pin_init::init_from_closure;
 
 use crate::error::Error;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
-use crate::utils::init::{try_init, Init, InitDefault, IntoFallibleInit};
+use crate::utils::init::{init, Init, InitDefault, IntoFallibleInit, PinInit};
 
 /// A wrapper for a type `T` which might not always be present in the TLV stream.
 ///
@@ -39,7 +39,7 @@ impl<T> Skippable<T> {
 
     /// Initialize a Skippable with the given initializer.
     pub fn init<I: Init<T, E>, E>(value: I) -> impl Init<Self, E> {
-        try_init!(Self {
+        init!(Self {
             value <- value,
         }? E)
     }

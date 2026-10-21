@@ -18,10 +18,9 @@
 use core::convert::Infallible;
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 
-/// Re-export `pinned-init` because its API is very unstable currently (0.0.x)
-pub use pinned_init::*;
-// `pinned_init::zeroed` returns a value since 0.0.10; the in-place initializer is `init_zeroed`
-pub use pinned_init::init_zeroed as zeroed;
+pub use pin_init::init_zeroed as zeroed;
+/// Re-export `pin-init` for the crate's in-place initialization API.
+pub use pin_init::*;
 
 /// Convert a closure returning `Result<impl Init<T, E>, E>` into an `Init<T, E>`.
 pub fn into_init<F, T, E, I: Init<T, E>>(f: F) -> impl Init<T, E>
@@ -87,14 +86,14 @@ pub trait InitMaybeUninit<T> {
     where
         T: Zeroable,
     {
-        self.init_with(pinned_init::init_zeroed())
+        self.init_with(pin_init::init_zeroed())
     }
 }
 
 impl<T> InitMaybeUninit<T> for MaybeUninit<T> {
     fn try_init_with<I: Init<T, E>, E>(&mut self, init: I) -> Result<&mut T, E> {
         unsafe {
-            Init::<T, E>::__init(init, self.as_mut_ptr())?;
+            <I as PinInit<T, E>>::__init(init, self.as_mut_ptr())?;
 
             Ok(self.assume_init_mut())
         }

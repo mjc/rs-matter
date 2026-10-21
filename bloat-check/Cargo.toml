@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
-rust-version = "1.87"
+rust-version = "1.95"
 publish = false
 
 [[bin]]
@@ -55,13 +55,13 @@ defmt = "1"
 embassy-sync = { version = "0.8", features = ["defmt"] }
 embassy-time = { version = "0.5", features = ["defmt"] }
 embassy-executor = { version = "0.10", features = ["defmt"] }
-embedded-alloc = "0.6"
+embedded-alloc = "0.7"
 rtt-target = { version = "0.6", features = ["defmt"] }
 panic-rtt-target = "0.2"
 rs-matter = { path = "../rs-matter", default-features = false, features = ["defmt"] }
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
-cortex-m = { version = "0.7.7", features = ["critical-section-single-core" ] }
+cortex-m = { version = "0.7.9", features = ["critical-section-single-core" ] }
 cortex-m-rt = "0.7"
 embassy-executor = { version = "0.10", features = ["platform-cortex-m"] }
 

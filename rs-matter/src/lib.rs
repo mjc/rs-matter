@@ -1211,7 +1211,7 @@ impl MatterState {
     }
 
     /// Return an in-place initializer for MatterState
-    // NOTE: `init!` (pinned-init) rejects `#[cfg]` on its fields, so the
+    // NOTE: `init!` rejects `#[cfg]` on its fields, so the
     // `case-resumption` field forces two full variants of this initializer.
     #[cfg(feature = "case-resumption")]
     fn init() -> impl Init<Self> {

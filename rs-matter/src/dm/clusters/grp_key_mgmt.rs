@@ -555,7 +555,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             let fabric = state.fabrics.fabric(fab_idx)?;
 
             // Always include IPK (0) plus all stored key set IDs
-            let mut ids = response.group_key_set_i_ds()?;
+            let mut ids = response.group_key_set_ids()?;
             ids = ids.push(&0u16)?;
 
             for entry in fabric.groups().key_set_iter() {
@@ -692,6 +692,6 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         response: KeySetReadAllIndicesResponseBuilder<P>,
     ) -> Result<P, Error> {
         // The IPK (key set 0) is always present, even without group support.
-        response.group_key_set_i_ds()?.push(&0u16)?.end()?.end()
+        response.group_key_set_ids()?.push(&0u16)?.end()?.end()
     }
 }

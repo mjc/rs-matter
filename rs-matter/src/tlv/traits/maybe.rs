@@ -93,7 +93,7 @@ impl<'a, T: FromTLV<'a>> FromTLV<'a> for Maybe<T, AsNullable> {
                     _ => Some(T::init_nullable_from_tlv(element)),
                 };
 
-                init::Init::__init(Maybe::init(init), slot)
+                init::PinInit::__init(Maybe::init(init), slot)
             })
         }
     }

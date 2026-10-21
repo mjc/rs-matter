@@ -181,7 +181,7 @@ alloc = ["defmt?/alloc"]
 # Crypto backend: Rust Crypto.
 rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha1", "sha2", "aes", "p256", "x509-cert"]
 # Crypto backend: OpenSSL (not usable for baremetal targets, only for OS targets with OpenSSL installed).
-openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
+openssl = ["alloc", "dep:openssl", "hmac", "sha2"]
 # Crypto backend: mbedTLS.
 mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
 # Build `rs-matter` with support for work-stealing executors, like the default Tokio executor.
@@ -217,17 +217,17 @@ case-responder-only = []
 [dependencies]
 rs-matter-macros = { workspace = true }
 cfg-if = "1"
-bitflags = { version =  "2.5", default-features = false }
+bitflags = { version =  "2.13", default-features = false }
 embedded-io-async = "0.7"
 heapless = "0.9"
 num = { version = "0.4", default-features = false }
 num-derive = "0.5"
-num_enum = { version = "0.7.5", default-features = false }
+num_enum = { version = "0.7.6", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 strum = { version = "0.28", features = ["derive"], default-features = false }
 log = { version = "0.4", optional = true }
 defmt = { version = "1", optional = true, features = ["ip_in_core"] }
-subtle = { version = "2.5", default-features = false }
+subtle = { version = "2.6", default-features = false }
 time = { version = "0.3", default-features = false }
 rand_core = { version = "0.10", default-features = false }
 verhoeff = { version = "1", default-features = false }
@@ -235,16 +235,15 @@ embassy-futures = "0.1.2"
 embassy-time = "0.5"
 embassy-sync = "0.8"
 either = { version = "1", default-features = false }
-critical-section = "1.1"
+critical-section = "1.2"
 domain = { version = "0.12", default-features = false, features = ["heapless"] }
 qrcodegen-no-heap = "1.8"
 rqrr = { version = "0.11", default-features = false, optional = true }
 scopeguard = { version = "1", default-features = false }
-pinned-init = { version = "0.0.10", default-features = false }
+pin-init = { git = "https://github.com/Rust-for-Linux/pin-init", rev = "442d50b086ba1d4555997bee447e2c2b77321ac3", default-features = false }
 
 # crypto
 openssl = { version = "0.10", optional = true }
-foreign-types = { version = "0.3", optional = true }
 mbedtls-rs-sys = { version = "0.3", default-features = false, features = ["matter"], optional = true }
 
 # rust-crypto
@@ -275,9 +274,9 @@ async-io = { version = "2", optional = true, default-features = false }
 async-compat = { version = "0.2", optional = true, default-features = false }
 
 # OS
-zbus = { version = "5.8", optional = true }
+zbus = { version = "5.19", optional = true }
 serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
-serde-json-core = { version = "0.6", optional = true }
+serde-json-core = { version = "0.7", optional = true }
 async-channel = { version = "2", optional = true }
 uuid = { version = "1", optional = true, features = ["v4"] }
 libc = { version = "0.2", optional = true }

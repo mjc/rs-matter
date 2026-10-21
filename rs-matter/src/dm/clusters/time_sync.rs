@@ -71,7 +71,7 @@ use crate::tlv::{
 };
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::FIRMWARE_BUILD_MATTER_US;
-use crate::utils::init::{init, into_init, try_init, Init};
+use crate::utils::init::{init, into_init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
@@ -741,7 +741,7 @@ impl<'a, const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> FromTLV<'a>
         into_init(move || {
             let seq = tlv.structure()?;
 
-            let init = try_init!(Self {
+            let init = init!(Self {
                 time_zone <- Vec::<TimeZoneOwned, TIME_ZONE_MAX>::init_from_tlv(seq.ctx(0)?),
                 dst_offset <- Vec::<DSTOffsetEntry, DST_OFFSET_MAX>::init_from_tlv(seq.ctx(1)?),
             }? Error);

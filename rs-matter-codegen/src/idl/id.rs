@@ -16,7 +16,7 @@
 
 //! A collection of utilities for converting IDL identifiers to Rust identifiers.
 
-use convert_case::{Case, Casing};
+use convert_case::{Boundary, Case, Casing, Converter};
 use proc_macro2::{Ident, Span};
 
 /// Convert an IDL identifier (like `kFoo`) into a name suitable for
@@ -78,7 +78,48 @@ pub fn idl_id_to_enum_variant_name(s: &str) -> String {
 /// assert_eq!(idl_field_name_to_rs_name("NOCs"), "nocs");
 /// ```
 pub fn idl_field_name_to_rs_name(s: &str) -> String {
-    s.replace("NOCs", "nocs-").to_case(Case::Snake)
+    fn acronym_boundary(s: &[&str]) -> bool {
+        let plural_acronym = s.get(2).copied() == Some("s")
+            && s.get(3)
+                .map(|next| !next.chars().all(char::is_lowercase))
+                .unwrap_or(true);
+
+        Boundary::Acronym.matches(s) && !plural_acronym
+    }
+
+    Converter::new()
+        .remove_boundary(Boundary::Acronym)
+        .add_boundary(Boundary::Custom {
+            condition: acronym_boundary,
+            start: 1,
+            len: 0,
+        })
+        .to_case(Case::Snake)
+        .convert(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::idl_field_name_to_rs_name;
+
+    #[test]
+    fn field_names_preserve_acronyms_and_their_plural_suffix() {
+        assert_eq!(idl_field_name_to_rs_name("NOCs"), "nocs");
+        assert_eq!(
+            idl_field_name_to_rs_name("numberOfPINUsersSupported"),
+            "number_of_pin_users_supported"
+        );
+        assert_eq!(
+            idl_field_name_to_rs_name("numberOfRFIDUsersSupported"),
+            "number_of_rfid_users_supported"
+        );
+        assert_eq!(
+            idl_field_name_to_rs_name("groupKeySetIDs"),
+            "group_key_set_ids"
+        );
+        assert_eq!(idl_field_name_to_rs_name("HTTPRequests"), "http_requests");
+        assert_eq!(idl_field_name_to_rs_name("anotherTest"), "another_test");
+    }
 }
 
 /// Convert an IDL identifier (like `anotherTest`) into a name suitable for

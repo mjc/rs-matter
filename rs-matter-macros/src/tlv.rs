@@ -647,7 +647,7 @@ fn gen_fromtlv_for_struct_named(
                     #[allow(unused_mut)]
                     let mut seq = element.#datatype()?;
 
-                    let init = #krate::utils::init::try_init!(Self {
+                    let init = #krate::utils::init::init!(Self {
                         #(#idents <- #types::init_from_tlv(seq.#seq_method(#tags)?),
                         )*
                     }? #krate::error::Error);
@@ -1060,7 +1060,7 @@ mod tests {
                             #[allow(unused_mut)]
                             let mut seq = element.r#struct()?;
 
-                            let init = rs_matter_maybe_renamed::utils::init::try_init!(Self {
+                            let init = rs_matter_maybe_renamed::utils::init::init!(Self {
                                 field1 <- u8::init_from_tlv(seq.find_ctx(0u8)?),
                                 field2 <- u32::init_from_tlv(seq.find_ctx(1u8)?),
                                 field_opt <- Option::init_from_tlv(seq.find_ctx(2u8)?),
