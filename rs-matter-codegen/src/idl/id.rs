@@ -98,30 +98,6 @@ pub fn idl_field_name_to_rs_name(s: &str) -> String {
         .convert(s)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::idl_field_name_to_rs_name;
-
-    #[test]
-    fn field_names_preserve_acronyms_and_their_plural_suffix() {
-        assert_eq!(idl_field_name_to_rs_name("NOCs"), "nocs");
-        assert_eq!(
-            idl_field_name_to_rs_name("numberOfPINUsersSupported"),
-            "number_of_pin_users_supported"
-        );
-        assert_eq!(
-            idl_field_name_to_rs_name("numberOfRFIDUsersSupported"),
-            "number_of_rfid_users_supported"
-        );
-        assert_eq!(
-            idl_field_name_to_rs_name("groupKeySetIDs"),
-            "group_key_set_ids"
-        );
-        assert_eq!(idl_field_name_to_rs_name("HTTPRequests"), "http_requests");
-        assert_eq!(idl_field_name_to_rs_name("anotherTest"), "another_test");
-    }
-}
-
 /// Convert an IDL identifier (like `anotherTest`) into a name suitable for
 /// types based on Rust guidelines
 ///
@@ -178,5 +154,29 @@ pub fn ident(name: &str) -> Ident {
         Ident::new_raw(name, Span::call_site())
     } else {
         Ident::new(name, Span::call_site())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::idl_field_name_to_rs_name;
+
+    #[test]
+    fn field_names_preserve_acronyms_and_their_plural_suffix() {
+        assert_eq!(idl_field_name_to_rs_name("NOCs"), "nocs");
+        assert_eq!(
+            idl_field_name_to_rs_name("numberOfPINUsersSupported"),
+            "number_of_pin_users_supported"
+        );
+        assert_eq!(
+            idl_field_name_to_rs_name("numberOfRFIDUsersSupported"),
+            "number_of_rfid_users_supported"
+        );
+        assert_eq!(
+            idl_field_name_to_rs_name("groupKeySetIDs"),
+            "group_key_set_ids"
+        );
+        assert_eq!(idl_field_name_to_rs_name("HTTPRequests"), "http_requests");
+        assert_eq!(idl_field_name_to_rs_name("anotherTest"), "another_test");
     }
 }
